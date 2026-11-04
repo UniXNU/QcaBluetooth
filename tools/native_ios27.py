@@ -40,6 +40,9 @@ MODEL_VTABLE = 0x100bafcf8
 MODEL_CAPABILITIES = dict(ext_adv=0xa30, periodic_adv=0xa38, periodic_sync=0xa40,
     past_sender=0xa48, past_recipient=0xa50, ext_scan=0xac0, enhanced_connection=0xac8,
     spec_adv=0xad8, coded_phy=0xba8, adv_sets=0x1138)
+H4_PRESTOP = 0x1003083cc
+TRANSPORT = 0x100c1cdf8
+H4_TABLE = 0x100c1cd50
 BZERO = 0x10090a160
 PACIBSP = 0xd503237f
 RET = 0xd65f03c0
@@ -267,12 +270,31 @@ class NativeImage(_inspect.Image):
         self.put(OPTIONAL_STEP, [branch(OPTIONAL_STEP, entry)], [PACIBSP])
         return self
 
+    def h4_shutdown(self):
+        # The stock pre-stop handles none and H4DS, but dereferences +0x60 for
+        # H4. The actual H4 table has no such extension. Its regular close
+        # callback remains installed and is called by native stack teardown.
+        if self.word(H4_TABLE) != 1 or struct.unpack_from('<Q', self.data, self.offset(H4_TABLE) + 0x60)[0]:
+            raise ValueError('native H4 table or empty pre-stop extension differs')
+        expected = [adrp(H4_PRESTOP, 8, TRANSPORT),
+                    memory(0xf9400000, 8, 8, TRANSPORT & 4095, 8),
+                    memory(0xb9400000, 9, 8, 0, 4)]
+        if [self.word(H4_PRESTOP + i * 4) for i in range(3)] != expected:
+            raise ValueError('native pre-stop transport lookup differs')
+        start = self.cursor
+        entry = self.emit('h4_prestop', [lambda pc: adrp(pc, 8, TRANSPORT), expected[1], expected[2],
+            0x7100053f,  # cmp w9, #1
+            lambda pc: 0x54000001 | relative(pc, start + 24, 19) << 5,
+            RET, lambda pc: branch(pc, H4_PRESTOP + 12)])
+        self.put(H4_PRESTOP, [branch(H4_PRESTOP, entry)], expected[:1])
+        return self
+
     def report(self):
         return dict(input_sha256=ORIGINAL_SHA256, input_uuid=self.uuid,
                     output_sha256=hashlib.sha256(self.data).hexdigest(),
-                    stage='vendor-routing', adapter_ready=False, hardware_verified=False,
+                    stage='vendor-routing-and-h4-shutdown', adapter_ready=False, hardware_verified=False,
                     cave_start=hex(CAVE), cave_end=hex(self.cursor),
                     entries=self.entries, patches=self.patches,
                     capability_slots=self.capability_slots(),
-                    pending=['native capability publication', 'H4 shutdown adaptation',
+                    pending=['native capability publication',
                              'payload installation and device verification'])

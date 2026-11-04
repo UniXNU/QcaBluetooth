@@ -38,6 +38,7 @@ class Machine:
         self.stop_at = set()
         self.bzero_calls = []
         self.next_calls = []
+        self.indirect_calls = []
         self.uc.hook_add(UC_HOOK_CODE, self.hook)
 
     def hook(self, uc, address, size, _):
@@ -65,6 +66,10 @@ class Machine:
             if word == n.PACIBSP:
                 self.pac += 1
                 uc.reg_write(UC_ARM64_REG_PC, address + 4)
+            elif word == 0xd61f081f:  # braaz x0, authenticated native tail call
+                target = uc.reg_read(UC_ARM64_REG_X0)
+                self.indirect_calls.append(target)
+                uc.reg_write(UC_ARM64_REG_PC, target)
             elif word == 0xd65f0fff:  # retab: native frame is restored already
                 assert self.pac == 1
                 self.pac -= 1
@@ -167,6 +172,18 @@ def check(image):
                 assert m.next_calls == [CONTEXT] and m.pac == 0
             cases += 1
 
+        for transport in (0, 1, 2, 3, 11):
+            m = Machine(image, slide)
+            table = STACK + 0x100
+            m.write(n.TRANSPORT, struct.pack('<Q', table))
+            m.uc.mem_write(table, struct.pack('<I', transport))
+            callback = 0 if transport == 1 else STOP
+            m.uc.mem_write(table + 0x60, struct.pack('<Q', callback))
+            m.run(n.H4_PRESTOP)
+            assert m.indirect_calls == ([] if transport in (0, 1, 11) else [STOP])
+            assert m.uc.reg_read(UC_ARM64_REG_SP) == m.initial_sp and m.pac == 0
+            cases += 1
+
     # Machine code edits cannot silently touch existing functions or fixups.
     permitted = set(range(image.offset(n.CAVE), image.offset(image.cursor)))
     for patch in image.patches:
@@ -184,7 +201,7 @@ def main():
     parser.add_argument('image', type=Path)
     parser.add_argument('--output', type=Path, default=Path(__file__).resolve().parents[1] / 'out/native-test')
     args = parser.parse_args()
-    image = n.NativeImage(args.image).vendor_routing()
+    image = n.NativeImage(args.image).vendor_routing().h4_shutdown()
     cases = check(image)
     with TemporaryDirectory() as directory:
         wrong = Path(directory) / 'bluetoothd'
@@ -202,7 +219,7 @@ def main():
                   simulated='actual original and patched AArch64 instructions at two ASLR slides',
                   pointer_authentication='PAC operations modeled without target keys', hardware_verified=False)
     (args.output / 'report.json').write_text(json.dumps(report, indent=2) + '\n')
-    print(f'Native vendor routing: {cases} instruction cases passed at two ASLR slides')
+    print(f'Native routing and H4 shutdown: {cases} instruction cases passed at two ASLR slides')
 
 
 if __name__ == '__main__':
