@@ -38,8 +38,9 @@ and checks symbol names and availability in the built kernel.
 call sites. The arm64e BlueTool build is signed and includes a launchd job.
 
 The component passes host simulation and iPadOS 27 arm64e source compilation.
-Board resource binding, runtime packaging and native controller adaptation are
-in development; device scanning, pairing and audio are pending.
+The sheng source integration binds UART14 clocks, IRQ, DMA and GPIO wake to its
+worker. Runtime payload installation and native controller adaptation are in
+development; device scanning, pairing and audio are pending.
 
 ## Sources and licenses
 
