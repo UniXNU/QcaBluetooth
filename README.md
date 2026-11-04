@@ -36,7 +36,8 @@ python3 tools/build-type0.py
 The runtime check covers actual Linux initialization, NVM edits, firmware
 fallback, timeouts, H4 fragmentation and backpressure, and IBS at TX packet
 boundaries. The DMA check covers buffer ownership, address width, wire drain,
-flow control, quiesce/resume and faults. Both run with address and undefined
+flow control, quiesce/resume and faults. UART clock-restore failures terminate
+the transport with the original error; failed channels stop forwarding and retries. Both run with address and undefined
 behavior sanitizers. The kernel check uses the target's BSD compilation record
 and checks symbol names and availability in the built kernel.
 
@@ -49,8 +50,9 @@ The component passes host simulation and iPadOS 27 arm64e source compilation.
 The sheng source integration binds UART14 clocks, IRQ, DMA and GPIO wake to its
 worker. The native controller adapter compiles for arm64e and passes host
 checks. The board runtime builder stages three signed arm64e binaries, firmware
-and the shared launchd cache. Full image integration and device scanning, pairing
-and audio are pending.
+and the shared launchd cache. The complete sheng kernel, fileset, FAT payload
+and temporary boot image build successfully from the explicit local component.
+Device scanning, pairing and audio are pending.
 
 ## Sources and licenses
 

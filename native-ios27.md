@@ -10,7 +10,8 @@ The adapter targets the original arm64e `bluetoothd` from 24A446:
 `tools/build-userland.py` signs the native daemon with its original identifier
 and entitlements, then stages BlueTool, bluetoothd and the capability library.
 The board runtime builder installs their files, firmware and signed launchd
-cache in the Data addon. Full image integration and device checks are pending.
+cache in the Data addon. The complete kernel, fileset, payload and temporary
+boot image build successfully. Device checks are pending.
 Apple binaries remain external inputs.
 
 ## Routing
