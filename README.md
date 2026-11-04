@@ -13,6 +13,8 @@ Linux `btqca.c` startup sequence and Apple's native Bluetooth protocol stack.
   lifetime and worker power requests through `kern.sheng_bt_control`.
 - `userland/BlueTool.c`: `com.apple.BlueTool` XPC bootstrap service. Pairing,
   key storage, BLE and audio profiles run in the system's `bluetoothd`.
+- `userland/Type0.c`: capabilities from real HCI reports, asynchronous advertising
+  capacity and native mode refresh. The offline patch retains pointer authentication.
 
 `tools/prepare-linux.py` verifies the source hash before staging byte-identical
 Linux code in `out/linux`. `QBT_LINUX_TREE` selects an existing Linux checkout.
@@ -25,6 +27,7 @@ python3 tools/test-runtime.py
 python3 tools/test-geni.py
 python3 tools/check-kernel.py /path/to/assembled/tree
 python3 tools/build-bluetool.py
+python3 tools/build-type0.py
 ```
 
 The runtime check covers actual Linux initialization, NVM edits, firmware
@@ -37,17 +40,18 @@ and checks symbol names and availability in the built kernel.
 `tools/inspect-ios.py` records a local `bluetoothd` identity and transport/model
 call sites. The arm64e BlueTool build is signed and includes a launchd job.
 [Native routing](native-ios27.md) documents the version-locked iPadOS 27 patch
-and its 76 AArch64 instruction cases.
+and its 144 AArch64 instruction and 58 production publisher cases.
 
 The component passes host simulation and iPadOS 27 arm64e source compilation.
 The sheng source integration binds UART14 clocks, IRQ, DMA and GPIO wake to its
-worker. Runtime payload installation and native controller adaptation are in
-development; device scanning, pairing and audio are pending.
+worker. The native controller adapter compiles for arm64e and passes host
+checks. Runtime installation and device scanning, pairing and audio are pending.
 
 ## Sources and licenses
 
 Linux initialization and GENI/H4/IBS code use GPL-2.0-only. The UART.SK adapter
 derives from the Renoir APSL-2.0 transport; its companion notice preserves that
 license. Public platform interfaces and the BlueTool service use
-BSD-2-Clause-Patent as identified in each file. Vendor firmware and Apple
+BSD-2-Clause-Patent as identified in each file. The native capability publisher
+derives from Renoir under BSD-3-Clause; its source lock and license retain attribution. Vendor firmware and Apple
 binaries are external inputs and remain outside source control.
