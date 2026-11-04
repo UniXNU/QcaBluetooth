@@ -31,7 +31,7 @@ static void handle(xpc_object_t message) {
         xpc_object_t args=xpc_dictionary_get_value(message,"kMsgArgs");
         const char *script=args && xpc_get_type(args)==XPC_TYPE_DICTIONARY?xpc_dictionary_get_string(args,"script"):NULL;
         if(script && (!strcmp(script,"boot") || !strcmp(script,"init")))error=controller(true);
-        else if(script && !strcmp(script,"deepsleep"))error=state();
+        else if(script && !strcmp(script,"deepsleep")){error=state();if(error==ENETDOWN)error=0;}
         else error=EINVAL;
         os_log(logger,"script %{public}s result %d",script?script:"missing",error);
     }
