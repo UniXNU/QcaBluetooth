@@ -136,6 +136,9 @@ int qbt_transmit(struct qbt *q, const uint8_t *p, size_t n) {
     memcpy(q->tx + tail, p, first); memcpy(q->tx, p + first, n - first);
     q->tx_length += (unsigned)n; q->stats.host_bytes += n; return 0;
 }
+size_t qbt_transmit_capacity(const struct qbt *q) {
+    return q->service && q->info.state==2?QBT_TX_CAPACITY-q->tx_length:0;
+}
 void qbt_step(struct qbt *q) {
     (void)flush(q);
     if (q->info.state == 3) return;
@@ -200,12 +203,16 @@ void qbt_set_service(struct qbt *q, bool enabled) {
     }
 }
 void qbt_rx_wake(struct qbt *q) { if (clock_on(q)) q->info.error = -EIO; }
+void qbt_fail(struct qbt *q,int error) {
+    q->info.state=3;q->info.error=error<0?error:-EIO;q->service=false;
+    q->retry_at=q->idle_at=0;
+}
 static int run(struct qbt *q, uint64_t deadline, unsigned predicate) {
     for (;;) {
         q->ops.pump(q->ops.context); qbt_step(q);
+        if (q->info.error) return q->info.error;
         if ((predicate == 0 && !q->command_length) || (predicate == 1 && q->complete) ||
             (predicate == 2 && !q->command_length && drained(q))) return 0;
-        if (q->info.error) return q->info.error;
         uint64_t t = now(q); if (t >= deadline) { q->stats.timeouts++; return -ETIMEDOUT; }
         uint64_t next = qbt_deadline(q); if (!next || next > deadline) next = deadline;
         /* UART completion and ring-space producers signal this wait. */

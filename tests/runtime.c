@@ -11,7 +11,7 @@ struct fixture {
     uint8_t received[70000], tx_frame[70000]; unsigned tx_count, tx_need;
     uint8_t patch[1001], nvm[603], downloaded[2048]; size_t downloaded_length, download_size;
     unsigned download_mode, failed_opcode; bool missing_replies, missing_wake, board_specific;
-    bool nvm_edited, address_written, wake_armed;
+    bool nvm_edited, address_written, wake_armed, hardware_fault;
 };
 static void put16(uint8_t *p,unsigned v){p[0]=v;p[1]=v>>8;}
 static void put32(uint8_t *p,unsigned v){put16(p,v);put16(p+2,v>>16);}
@@ -80,6 +80,7 @@ static size_t receive(void *c,const uint8_t *p,size_t n){
 }
 static void pump(void *c){
     struct fixture *f=c;
+    if(f->hardware_fault){qbt_fail(f->q,-EIO);return;}
     for(unsigned i=0;i<128;i++){
         struct event *e=&f->events[i];if(!e->size||e->at>f->now)continue;
         size_t n=e->size-e->offset;if(n>3)n=3; /* every reply spans parser calls */
@@ -125,7 +126,8 @@ static void initialization(void){
 static void failures(void){
     struct fixture *f=calloc(1,sizeof(*f));make(f,3);f->failed_opcode=0xfc17;assert(boot(f)==-EIO&&f->q->info.state==3);
     uint8_t packet[]={1,3,12,0};assert(qbt_transmit(f->q,packet,sizeof(packet))==-ENETDOWN);destroy(f);
-    make(f,0);f->missing_replies=true;uint64_t start=f->now;assert(boot(f)==-ETIMEDOUT);assert(f->now-start==QBT_COMMAND_TIMEOUT&&f->waits<10);destroy(f);free(f);
+    make(f,0);f->missing_replies=true;uint64_t start=f->now;assert(boot(f)==-ETIMEDOUT);assert(f->now-start==QBT_COMMAND_TIMEOUT&&f->waits<10);destroy(f);
+    make(f,0);f->hardware_fault=true;start=f->now;assert(boot(f)==-EIO && f->now==start && !f->waits);destroy(f);free(f);
 }
 static void receive_pressure(void){
     struct fixture *f=calloc(1,sizeof(*f));make(f,3);assert(!boot(f));qbt_set_service(f->q,true);

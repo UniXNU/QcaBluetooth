@@ -48,10 +48,13 @@ void qbt_destroy(struct qbt *);
 size_t qbt_receive(struct qbt *, const uint8_t *, size_t);
 /* Atomic enqueue: 0 accepted, negative errno leaves ownership with the caller. */
 int qbt_transmit(struct qbt *, const uint8_t *, size_t);
+size_t qbt_transmit_capacity(const struct qbt *);
 void qbt_step(struct qbt *);
 uint64_t qbt_deadline(const struct qbt *);
 void qbt_set_service(struct qbt *, bool);
 void qbt_rx_wake(struct qbt *);
+/* Abort command waiters promptly after a UART/DMA fault on the executor. */
+void qbt_fail(struct qbt *, int error);
 int qbt_boot(struct qbt *, uint32_t baud, const uint8_t address[6]);
 int qbt_shutdown(struct qbt *);
 void qbt_get_info(const struct qbt *, struct qbt_info *);
