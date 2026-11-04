@@ -84,13 +84,15 @@ void qbt_destroy(struct qbt *q) {
     struct qbt_platform p = q->ops; memset(q, 0, sizeof(*q)); p.release(p.context, q, sizeof(*q));
 }
 size_t qbt_receive(struct qbt *q, const uint8_t *data, size_t length) {
+    if (q->info.state == 3) return 0;
     size_t i = 0;
     while (i < length) {
         if (!flush(q)) break;
         if (!q->header_need && !q->body) {
             uint8_t b = data[i++];
             if (b == WAKE_IND) {
-                if (clock_on(q)) { q->info.error = -EIO; break; }
+                int e = clock_on(q);
+                if (e) { qbt_fail(q, e); break; }
                 q->rx_awake = true; control(q, WAKE_ACK); q->stats.wake_ack++;
             } else if (b == WAKE_ACK) {
                 if (q->tx_state == QBT_WAKING) { q->tx_state = QBT_AWAKE; q->retry_at = 0; q->idle_at = now(q) + QBT_TX_IDLE; }
@@ -140,10 +142,13 @@ size_t qbt_transmit_capacity(const struct qbt *q) {
     return q->service && q->info.state==2?QBT_TX_CAPACITY-q->tx_length:0;
 }
 void qbt_step(struct qbt *q) {
-    (void)flush(q);
     if (q->info.state == 3) return;
+    (void)flush(q);
     uint64_t t = now(q); bool pending = q->command_length || (q->service && q->tx_length);
-    if (pending && clock_on(q)) { q->info.error = -EIO; return; }
+    if (pending) {
+        int e = clock_on(q);
+        if (e) { qbt_fail(q, e); return; }
+    }
     if (q->ibs && pending && q->tx_state == QBT_ASLEEP) {
         q->tx_state = QBT_WAKING; q->wake_attempts = 1; control(q, WAKE_IND);
         q->retry_at = t + QBT_WAKE_RETRY; q->stats.wake_ind++;
@@ -187,6 +192,7 @@ void qbt_step(struct qbt *q) {
     }
 }
 uint64_t qbt_deadline(const struct qbt *q) {
+    if (q->info.state == 3) return UINT64_MAX;
     bool idle = q->ops.uart_drained(q->ops.context);
     if (q->control_length && !q->tx_frame.type && idle) return 0;
     if ((q->command_length || (q->service && q->tx_length)) && idle && q->tx_state != QBT_WAKING) return 0;
@@ -202,7 +208,11 @@ void qbt_set_service(struct qbt *q, bool enabled) {
         q->tx_head = q->tx_length = 0; q->forward_length = q->forward_offset = 0;
     }
 }
-void qbt_rx_wake(struct qbt *q) { if (clock_on(q)) q->info.error = -EIO; }
+void qbt_rx_wake(struct qbt *q) {
+    if (q->info.state == 3) return;
+    int e = clock_on(q);
+    if (e) qbt_fail(q, e);
+}
 void qbt_fail(struct qbt *q,int error) {
     q->info.state=3;q->info.error=error<0?error:-EIO;q->service=false;
     q->retry_at=q->idle_at=0;

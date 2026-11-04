@@ -11,7 +11,7 @@ struct fixture {
     uint8_t received[70000], tx_frame[70000]; unsigned tx_count, tx_need;
     uint8_t patch[1001], nvm[603], downloaded[2048]; size_t downloaded_length, download_size;
     unsigned download_mode, failed_opcode; bool missing_replies, missing_wake, board_specific;
-    bool nvm_edited, address_written, wake_armed, hardware_fault;
+    bool nvm_edited, address_written, wake_armed, hardware_fault, clock_fault;
 };
 static void put16(uint8_t *p,unsigned v){p[0]=v;p[1]=v>>8;}
 static void put32(uint8_t *p,unsigned v){put16(p,v);put16(p+2,v>>16);}
@@ -73,7 +73,7 @@ static size_t write_uart(void *c,const uint8_t *p,size_t n){
 }
 static int speed(void *c,uint32_t n){struct fixture *f=c;assert(drained(c));f->speed=n;return 0;}
 static int flow(void *c,bool on){struct fixture *f=c;if(on)f->flow_on++;else f->flow_off++;return 0;}
-static int clock_vote(void *c,bool on){struct fixture *f=c;if(on)f->clock_on++;else{if(!f->wake_armed)return -EBUSY;assert(drained(c));f->clock_off++;}return 0;}
+static int clock_vote(void *c,bool on){struct fixture *f=c;if(on){if(f->clock_fault)return -ENXIO;f->clock_on++;}else{if(!f->wake_armed)return -EBUSY;assert(drained(c));f->clock_off++;}return 0;}
 static size_t receive(void *c,const uint8_t *p,size_t n){
     struct fixture *f=c;if(n>f->receive_room)n=f->receive_room;assert(n<=sizeof(f->received)-f->received_length);
     memcpy(f->received+f->received_length,p,n);f->received_length+=n;f->receive_room-=n;return n;
@@ -154,6 +154,24 @@ static void lost_wake(void){
     struct fixture *f=calloc(1,sizeof(*f));make(f,3);assert(!boot(f));qbt_set_service(f->q,true);drive(f,40);f->missing_wake=true;
     uint8_t acl[]={2,1,0,1,0,0};assert(!qbt_transmit(f->q,acl,sizeof(acl)));drive(f,60);assert(f->q->info.state==3&&f->q->info.error==-ETIMEDOUT);destroy(f);free(f);
 }
+static void clock_failure(void){
+    struct fixture *f=calloc(1,sizeof(*f));
+    for(unsigned path=0;path<3;path++) {
+        make(f,3);assert(!boot(f));qbt_set_service(f->q,true);drive(f,50);
+        assert(!f->q->clock_on);f->clock_fault=true;
+        unsigned commands=f->commands,acks=f->tx_acks;
+        uint8_t acl[]={2,1,0,1,0,0},wake=0xfd;
+        if(path==0){assert(!qbt_transmit(f->q,acl,sizeof(acl)));qbt_step(f->q);}
+        else if(path==1)qbt_rx_wake(f->q);
+        else assert(qbt_receive(f->q,&wake,1)==1);
+        assert(f->q->info.state==3 && f->q->info.error==-ENXIO && !f->q->service);
+        assert(qbt_deadline(f->q)==UINT64_MAX && !qbt_transmit_capacity(f->q));
+        assert(!qbt_receive(f->q,&wake,1));qbt_step(f->q);
+        assert(f->commands==commands && f->tx_acks==acks);
+        destroy(f);
+    }
+    free(f);
+}
 static void tx_ibs_boundaries(void){
     struct fixture *f=calloc(1,sizeof(*f));make(f,3);assert(!boot(f));qbt_set_service(f->q,true);
     uint8_t acl[4101]={2,1,0,0,16};memset(acl+5,0xfc,sizeof(acl)-5);
@@ -171,4 +189,4 @@ static void tx_ibs_boundaries(void){
     assert(f->q->info.state==3 && f->q->info.error==-ECANCELED);
     destroy(f);free(f);
 }
-int main(void){initialization();failures();receive_pressure();sleep_and_wake();lost_wake();tx_ibs_boundaries();puts("PASS: original Linux WCN7850 setup, firmware/BID fallback, NVM edits, H4 fragmentation/backpressure, status failure, true timeout, partial DMA TX, IBS packet boundaries and clock/wake recovery");}
+int main(void){initialization();failures();receive_pressure();sleep_and_wake();lost_wake();clock_failure();tx_ibs_boundaries();puts("PASS: original Linux WCN7850 setup, firmware/BID fallback, NVM edits, H4 fragmentation/backpressure, status failure, true timeout, partial DMA TX, IBS packet boundaries, clock/wake recovery and terminal clock faults");}
