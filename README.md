@@ -36,6 +36,8 @@ and checks symbol names and availability in the built kernel.
 
 `tools/inspect-ios.py` records a local `bluetoothd` identity and transport/model
 call sites. The arm64e BlueTool build is signed and includes a launchd job.
+[Native routing](native-ios27.md) documents the version-locked iPadOS 27 patch
+and its 76 AArch64 instruction cases.
 
 The component passes host simulation and iPadOS 27 arm64e source compilation.
 The sheng source integration binds UART14 clocks, IRQ, DMA and GPIO wake to its
