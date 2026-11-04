@@ -6,8 +6,11 @@ The adapter targets the original arm64e `bluetoothd` from 24A446:
 - UUID: `8E49197B-E6BC-3F3B-A8D3-DF4BEDD37F01`
 
 `tools/patch-ios27.py` creates the patched executable and a JSON report.
-`tools/build-type0.py` builds and signs `/usr/lib/QcaBTType0.dylib`. Payload
-installation, executable signing and device verification are pending.
+`tools/build-type0.py` builds and signs `/usr/lib/QcaBTType0.dylib`.
+`tools/build-userland.py` signs the native daemon with its original identifier
+and entitlements, then stages BlueTool, bluetoothd and the capability library.
+The board runtime builder installs their files, firmware and signed launchd
+cache in the Data addon. Full image integration and device checks are pending.
 Apple binaries remain external inputs.
 
 ## Routing
@@ -43,6 +46,22 @@ retain their original PACIBSP landing pads. Native function calls use signed
 IA/0 pointers. The layout follows Apple's
 [dyld header](https://github.com/apple-oss-distributions/dyld/blob/main/include/mach-o/fixup-chains.h).
 
+## Runtime interfaces
+
+The board exports /arm-io/bluetooth and a matching IOService named bluetooth.
+Transport encoding 1 and speed 3200000 are four-byte little-endian properties;
+the stable private address appears as local-mac-address. Public addresses use
+network order; the Linux adapter converts to bdaddr_t before calling btqca.
+This follows the address representation in
+[BlueZ](https://github.com/bluez/bluez/blob/5.79/lib/bluetooth.c).
+
+Read-only unions expose the signed capability library under /usr/lib and both
+executables under /usr/sbin. The library mounts first. BlueTool retains its
+original Mach service and program path, runs as root and keeps transactions
+active. Its launchd job disables pressured exit. A controller already powered
+off acknowledges the sleep request successfully. Other native jobs are preserved;
+Wi-Fi and Bluetooth share one signed cache and one appended trust module.
+
 ## Build and verification
 
 From the component checkout, with the original binary at `$BLUETOOTHD`:
@@ -53,6 +72,7 @@ out/native-venv/bin/pip install -r tools/requirements-native.txt
 out/native-venv/bin/python tools/test-native.py "$BLUETOOTHD"
 python3 tools/test-type0.py "$BLUETOOTHD"
 python3 tools/build-type0.py
+python3 tools/build-userland.py out/runtime --bluetoothd "$BLUETOOTHD"
 python3 tools/patch-ios27.py "$BLUETOOTHD" --output out/ios27/bluetoothd.native
 ```
 

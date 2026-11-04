@@ -13,12 +13,15 @@ Linux `btqca.c` startup sequence and Apple's native Bluetooth protocol stack.
   lifetime and worker power requests through `kern.sheng_bt_control`.
 - `userland/BlueTool.c`: `com.apple.BlueTool` XPC bootstrap service. Pairing,
   key storage, BLE and audio profiles run in the system's `bluetoothd`.
+- `tools/build-userland.py`: signed native daemon and bootstrap/library bundle,
+  with the original daemon identifier and entitlements.
 - `userland/Type0.c`: capabilities from real HCI reports, asynchronous advertising
   capacity and native mode refresh. The offline patch retains pointer authentication.
 
 `tools/prepare-linux.py` verifies the source hash before staging byte-identical
 Linux code in `out/linux`. `QBT_LINUX_TREE` selects an existing Linux checkout.
 The source lock records the Linux, board and Renoir transport references.
+Public addresses use network order; the Linux boundary converts to bdaddr_t.
 
 ## Checks
 
@@ -45,7 +48,9 @@ and its 144 AArch64 instruction and 58 production publisher cases.
 The component passes host simulation and iPadOS 27 arm64e source compilation.
 The sheng source integration binds UART14 clocks, IRQ, DMA and GPIO wake to its
 worker. The native controller adapter compiles for arm64e and passes host
-checks. Runtime installation and device scanning, pairing and audio are pending.
+checks. The board runtime builder stages three signed arm64e binaries, firmware
+and the shared launchd cache. Full image integration and device scanning, pairing
+and audio are pending.
 
 ## Sources and licenses
 
