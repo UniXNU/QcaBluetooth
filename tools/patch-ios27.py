@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause-Patent
-"""Generate the audited iPadOS 27 vendor-routing stage and its patch report."""
+"""Generate the audited iPadOS 27 native capability adapter and its patch report."""
 import argparse
 import json
 from pathlib import Path
@@ -11,9 +11,9 @@ if __name__ == '__main__':
     parser.add_argument('image', type=Path)
     parser.add_argument('--output', type=Path, required=True)
     args = parser.parse_args()
-    image = NativeImage(args.image).vendor_routing().h4_shutdown()
+    image = NativeImage(args.image).vendor_routing().h4_shutdown().capability_adapter()
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_bytes(image.data)
     report = args.output.with_suffix(args.output.suffix + '.json')
     report.write_text(json.dumps(image.report(), indent=2) + '\n')
-    print(f'Vendor-routing stage: {args.output}; report: {report}')
+    print(f'Native capability adapter: {args.output}; report: {report}')

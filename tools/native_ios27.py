@@ -39,10 +39,33 @@ MODEL_VTABLE = 0x100bafcf8
 # Model slots traced through the target's configuration getters and their logs.
 MODEL_CAPABILITIES = dict(ext_adv=0xa30, periodic_adv=0xa38, periodic_sync=0xa40,
     past_sender=0xa48, past_recipient=0xa50, ext_scan=0xac0, enhanced_connection=0xac8,
-    spec_adv=0xad8, coded_phy=0xba8, adv_sets=0x1138)
+    spec_adv=0xad8, coded_phy=0xba8, phy_2m=0xbb8, adv_sets=0x1138)
 H4_PRESTOP = 0x1003083cc
 TRANSPORT = 0x100c1cdf8
 H4_TABLE = 0x100c1cd50
+NATIVE_STATE = 0x100caff80
+NATIVE_STATE_BYTES = 128
+NATIVE_DYLIB = b'/usr/lib/QcaBTType0.dylib'
+ADV_START = 0x1007ce390
+ADV_MODE = 0x90
+ADV_CAPACITY = 6  # 0x1003892f8..300: seven-byte records, memset_s bound 42
+CAP_OFFSETS = {name: 16 + index for index, name in enumerate(MODEL_CAPABILITIES) if name != 'adv_sets'}
+CAP_OFFSETS['adv_sets'] = 28
+NATIVE_BINDINGS = dict(STATE=NATIVE_STATE, STATE_BYTES=NATIVE_STATE_BYTES,
+    DESCRIPTORS=DESCRIPTORS, DESCRIPTOR_COUNT=DESCRIPTOR_COUNT,
+    SUPPORT_TABLE=SUPPORT_TABLE, SUPPORT_BYTES=SUPPORT_BYTES, LE_FEATURES=LE_FEATURES,
+    SUBMIT=0x1000648b8, ADVANCE=0x10032702c, CHAIN_FAIL=0x1003d793c,
+    CHAIN_CONTEXT=CHAIN_CONTEXT, INIT_SUBMIT_FLAG=0x100cadc34, MODEL=MODEL_GETTER,
+    SET_EXT_ADV=0x10038987c, SET_SPEC_ADV=0x100389870, SET_ADV_HANDLES=0x100389898,
+    SET_ENH_CONNECTION=0x100398f60, SET_EXT_SCAN=0x1003af20c,
+    SET_CODED_SCAN=0x1003af268,
+    SET_PERIODIC_ADV=0x10038ac8c, SET_PERIODIC_SYNC=0x100296dbc,
+    CACHE_EXT_ADV=0x100c3d120, CACHE_EXT_SCAN=0x100c3d110, CACHE_SPEC_ADV=0x100c3d288,
+    CACHE_ENH_CONNECTION=0x100c3d298, CACHE_PERIODIC_ADV=0x100c3d130,
+    CACHE_PERIODIC_SYNC=0x100c3d140, CACHE_PAST_SEND=0x100c3d150,
+    CACHE_PAST_RECV=0x100c3d160, CACHE_CODED_PHY=0x100c3d240, CACHE_PHY_2M=0x100c1f140,
+    LEGACY_STEP=0x100a0ef96, ALL_STEP=0x100a0ef26, MODEL_MULTIPLE_ADV=0xa0,
+    ADV_MODE=ADV_MODE, ADV_CAPACITY=ADV_CAPACITY, ID_ADV_SETS=0xd1)
 BZERO = 0x10090a160
 PACIBSP = 0xd503237f
 RET = 0xd65f03c0
@@ -263,11 +286,13 @@ class NativeImage(_inspect.Image):
         entry = self.emit('optional_0c5b', [lambda pc: adrp(pc, 16, address),
             memory(0x39400000, 16, 16, address & 4095, 1),
             lambda pc: 0x36180010 | relative(pc, start + 20, 14) << 5,
-            PACIBSP, lambda pc: branch(pc, OPTIONAL_STEP + 4),
+            0xd100c3ff, lambda pc: branch(pc, OPTIONAL_STEP + 8),
             lambda pc: adrp(pc, 8, CHAIN_CONTEXT),
             memory(0xf9400000, 0, 8, CHAIN_CONTEXT & 4095, 8),
+            0xd50323ff,  # authenticate the original PACIBSP before tail call
             lambda pc: branch(pc, CHAIN_NEXT)])
-        self.put(OPTIONAL_STEP, [branch(OPTIONAL_STEP, entry)], [PACIBSP])
+        site = OPTIONAL_STEP + 4  # retain the original indirect-call landing pad
+        self.put(site, [branch(site, entry)], [0xd100c3ff])
         return self
 
     def h4_shutdown(self):
@@ -289,12 +314,104 @@ class NativeImage(_inspect.Image):
         self.put(H4_PRESTOP, [branch(H4_PRESTOP, entry)], expected[:1])
         return self
 
+    def capability_adapter(self):
+        # Reserve virtual zero-fill storage; no file section or fixup occupies it.
+        segment = next(s for s in self.segments if s[0] == '__DATA')
+        if not segment[1] <= NATIVE_STATE or NATIVE_STATE + NATIVE_STATE_BYTES > segment[1] + segment[2]:
+            raise ValueError('native capability storage is outside writable data')
+        for section in self.sections:
+            if max(NATIVE_STATE, section['address']) < min(NATIVE_STATE + NATIVE_STATE_BYTES,
+                                                          section['address'] + section['size']):
+                raise ValueError('native capability storage overlaps a section')
+        self.capability_slots()  # verify authenticated USERLAND24 rebases
+        for name, slot in MODEL_CAPABILITIES.items():
+            address = NATIVE_STATE + CAP_OFFSETS[name]
+            op, scale = (0xb9400000, 4) if name == 'adv_sets' else (0x39400000, 1)
+            getter = self.emit('get_' + name, [0xd503245f,
+                lambda pc, a=address: adrp(pc, 8, a),
+                memory(op, 0, 8, address & 4095, scale), RET])
+            raw = self.fixups[MODEL_VTABLE + slot]
+            # dyld signs the new rebase using its original key and diversity.
+            # Copying a live vtable would invalidate its address-bound signatures.
+            new = (raw & 0xffffffff00000000) | (getter - self.base)
+            self.put(MODEL_VTABLE + slot, [new & 0xffffffff, new >> 32],
+                     [raw & 0xffffffff, raw >> 32])
+
+        publisher = self.emit('publish', [PACIBSP, 0xa9bf7bfd, 0x910003fd,
+            lambda pc: adrp(pc, 16, NATIVE_STATE),
+            memory(0xf9400000, 16, 16, NATIVE_STATE & 4095, 8),
+            0xd63f0a1f,  # blraaz x16; library function pointer is signed IA/0
+            0xa8c17bfd, 0xd65f0fff])
+        for kind, entry, tail, epilogue, parameter in (
+                (0, 0x10032a91c, 0x10032aa08, 0x10032aa18, 1),
+                (1, 0x10032a784, 0x10032a8ec, 0x10032a8fc, 2)):
+            displaced = self.word(entry + 4)
+            if self.word(entry) != PACIBSP or displaced not in (0xd10103ff, 0xd10183ff):
+                raise ValueError('native feature callback prologue differs')
+            capture = self.emit(f'features_{kind}', [lambda pc: adrp(pc, 8, NATIVE_STATE),
+                memory(0xb9000000, 0, 8, (NATIVE_STATE & 4095) + 64, 4),
+                mov_w(9, kind), memory(0xb9000000, 9, 8, (NATIVE_STATE & 4095) + 68, 4),
+                memory(0xf9000000, parameter, 8, (NATIVE_STATE & 4095) + 72, 8),
+                displaced, lambda pc, e=entry: branch(pc, e + 8)])
+            self.put(entry + 4, [branch(entry + 4, capture)], [displaced])
+            name = NATIVE_BINDINGS['ALL_STEP' if kind else 'LEGACY_STEP']
+            expected = [adrp(tail, 1, name), add(1, 1, name & 4095), mov_w(0, 0),
+                        branch(tail + 12, NATIVE_BINDINGS['ADVANCE'], True)]
+            self.put(tail, [branch(tail, publisher, True), branch(tail + 4, epilogue),
+                            0xd503201f, 0xd503201f], expected)
+
+        # Refresh the constructor's pre-probe choice before native GAP init.
+        prepare = self.emit('prepare_advertising', [0xa9bf7be0,
+            lambda pc: adrp(pc, 16, NATIVE_STATE),
+            memory(0xf9400000, 16, 16, (NATIVE_STATE & 4095) + 8, 8), 0xd63f0a1f,
+            0xa8c17be0, 0xd10143ff, lambda pc: branch(pc, ADV_START + 8)])
+        if self.word(ADV_START) != PACIBSP:
+            raise ValueError('native broadcaster entry differs')
+        self.put(ADV_START + 4, [branch(ADV_START + 4, prepare)], [0xd10143ff])
+
+        # Appending preserves every existing import ordinal. __TEXT already has
+        # executable tail room, so no segment or __LINKEDIT relocation is needed.
+        at = self.load_commands_end
+        size = (24 + len(NATIVE_DYLIB) + 1 + 7) & ~7
+        first_section = min(s['offset'] for s in self.sections if s['segment'] == '__TEXT')
+        if at + size > first_section or any(self.data[at:at + size]):
+            raise ValueError('no empty load-command room for native library')
+        command = struct.pack('<6I', 0xc, size, 24, 2, 0x10000, 0x10000) + NATIVE_DYLIB
+        words = struct.unpack('<' + 'I' * (size // 4), command.ljust(size, b'\0'))
+        self.put(self.base + at, words, [0] * len(words))
+        count, total = struct.unpack_from('<II', self.data, 16)
+        self.put(self.base + 16, [count + 1, total + size], [count, total])
+        self.entries['capability_state'] = hex(NATIVE_STATE)
+        self.entries['library'] = NATIVE_DYLIB.decode()
+        return self
+
     def report(self):
         return dict(input_sha256=ORIGINAL_SHA256, input_uuid=self.uuid,
                     output_sha256=hashlib.sha256(self.data).hexdigest(),
-                    stage='vendor-routing-and-h4-shutdown', adapter_ready=False, hardware_verified=False,
+                    stage='native-capability-adapter' if 'library' in self.entries else 'vendor-routing-and-h4-shutdown',
+                    adapter_ready='library' in self.entries, hardware_verified=False,
                     cave_start=hex(CAVE), cave_end=hex(self.cursor),
                     entries=self.entries, patches=self.patches,
                     capability_slots=self.capability_slots(),
-                    pending=['native capability publication',
-                             'payload installation and device verification'])
+                    pending=([] if 'library' in self.entries else ['native capability publication']) +
+                            ['payload installation and device verification'])
+
+
+def layout_header():
+    """Generate the shared private ABI for the version-locked adapter library."""
+    lines = ['/* Generated by native_ios27.py; external Apple image stays local. */',
+             '#ifndef QBT_IOS27_LAYOUT_H', '#define QBT_IOS27_LAYOUT_H',
+             '#include <stdint.h>', '#include <stddef.h>']
+    lines += [f'#define QBT_{name} 0x{address:x}ULL' for name, address in NATIVE_BINDINGS.items()]
+    lines += ['struct qbt_native_state {',
+              '    void (*publish)(void);', '    void (*prepare)(void *);']
+    lines += [f'    uint8_t {name};' for name in MODEL_CAPABILITIES if name != 'adv_sets']
+    lines += ['    uint8_t reserved[2];', '    uint32_t adv_sets;',
+              '    uint8_t reserved_tail[32];', '    uint32_t status, kind;',
+              '    uintptr_t parameters;', '};']
+    for name, offset in CAP_OFFSETS.items():
+        lines += [f'_Static_assert(offsetof(struct qbt_native_state, {name}) == {offset}, "{name} ABI");']
+    lines += ['_Static_assert(offsetof(struct qbt_native_state, status) == 64, "status ABI");',
+              '_Static_assert(offsetof(struct qbt_native_state, parameters) == 72, "parameters ABI");',
+              '#endif', '']
+    return '\n'.join(lines)

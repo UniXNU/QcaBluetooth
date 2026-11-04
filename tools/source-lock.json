@@ -16,5 +16,14 @@
     "drivers/clk/qcom/gcc-sm8550.c": "292630e2c5825ab947c9a649d8c4ec43303f17c5670dbda4062c13c35775b7d4",
     "drivers/clk/qcom/clk-rcg2.c": "e109e9113e6cbb18be3139f5838fa5d339f03256674df3ee8b6ed591ecd3c5c6",
     "drivers/iommu/arm/arm-smmu/arm-smmu.h": "b7221ee9b767594ba79cfc139fca838236f81ba949fb5e0be81e31ef42b1911c"
+  },
+  "native_adapter_reference": {
+    "repository": "https://github.com/daimile2/renoir_xnu_bluethooth",
+    "commit": "2b9d59c921c9ec803462b2be8deb6980f7297c22",
+    "files": {
+      "userland/renoir_bt_type0.c": "bb66ba844f06ccbba1702399f52191fc53154af94e2db224dd7f6fd7630af479",
+      "tools/patch-renoir-bluetoothd.py": "d7fa6e4d9f976b1a065c997017590342e1d6d28a963dcd32012aaed19268ec59"
+    },
+    "license": "BSD-3-Clause"
   }
 }

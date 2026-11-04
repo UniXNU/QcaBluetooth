@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause-Patent
-"""Execute the vendor-routing patches against an external original bluetoothd."""
+"""Execute the native routing and capability patches against an external original bluetoothd."""
 import argparse
 import hashlib
 import json
@@ -39,6 +39,11 @@ class Machine:
         self.bzero_calls = []
         self.next_calls = []
         self.indirect_calls = []
+        self.publish_calls = []
+        self.prepare_calls = []
+        self.mock_publish = STACK + 0x8000
+        self.mock_prepare = STACK + 0x8100
+        self.write(n.NATIVE_STATE, struct.pack('<QQ', self.mock_publish, self.mock_prepare))
         self.uc.hook_add(UC_HOOK_CODE, self.hook)
 
     def hook(self, uc, address, size, _):
@@ -46,7 +51,17 @@ class Machine:
             uc.emu_stop()
             return
         self.visited.append(address - self.slide)
-        if address == n.BZERO + self.slide:
+        if address == self.mock_publish:
+            self.publish_calls.append(struct.unpack('<IIQ', self.read(n.NATIVE_STATE + 64, 16)))
+            uc.reg_write(UC_ARM64_REG_PC, uc.reg_read(UC_ARM64_REG_X30))
+        elif address == self.mock_prepare:
+            self.prepare_calls.append(uc.reg_read(UC_ARM64_REG_X0))
+            uc.reg_write(UC_ARM64_REG_X0, 0xdeadbeef)
+            uc.reg_write(UC_ARM64_REG_PC, uc.reg_read(UC_ARM64_REG_X30))
+        elif address == 0x10000d938 + self.slide:
+            uc.reg_write(UC_ARM64_REG_X0, 0)
+            uc.reg_write(UC_ARM64_REG_PC, uc.reg_read(UC_ARM64_REG_X30))
+        elif address == n.BZERO + self.slide:
             va = uc.reg_read(UC_ARM64_REG_X0)
             count = uc.reg_read(UC_ARM64_REG_X1)
             self.bzero_calls.append((va, count))
@@ -66,12 +81,21 @@ class Machine:
             if word == n.PACIBSP:
                 self.pac += 1
                 uc.reg_write(UC_ARM64_REG_PC, address + 4)
+            elif word == 0xd50323ff:  # autibsp
+                assert self.pac > 0
+                self.pac -= 1
+                uc.reg_write(UC_ARM64_REG_PC, address + 4)
+            elif word == 0xd63f0a1f:  # blraaz x16, native-to-library ABI
+                from unicorn.arm64_const import UC_ARM64_REG_X16
+                target = uc.reg_read(UC_ARM64_REG_X16)
+                uc.reg_write(UC_ARM64_REG_X30, address + 4)
+                uc.reg_write(UC_ARM64_REG_PC, target)
             elif word == 0xd61f081f:  # braaz x0, authenticated native tail call
                 target = uc.reg_read(UC_ARM64_REG_X0)
                 self.indirect_calls.append(target)
                 uc.reg_write(UC_ARM64_REG_PC, target)
             elif word == 0xd65f0fff:  # retab: native frame is restored already
-                assert self.pac == 1
+                assert self.pac > 0
                 self.pac -= 1
                 uc.reg_write(UC_ARM64_REG_PC, uc.reg_read(UC_ARM64_REG_X30))
 
@@ -91,7 +115,7 @@ class Machine:
 
 def check(image):
     slots = image.capability_slots()
-    assert len(slots) == 10
+    assert len(slots) == 11
     assert all(v['address_diversity'] for v in slots.values())
     assert slots['periodic_sync']['target'] == '0x1004a5c2c'
     assert slots['adv_sets']['target'] == '0x1004c6234'
@@ -164,11 +188,12 @@ def check(image):
             m = Machine(image, slide)
             m.write(n.SUPPORT_TABLE + 18, bytes([byte]))
             m.write(n.CHAIN_CONTEXT, struct.pack('<Q', CONTEXT))
-            m.run(n.OPTIONAL_STEP, (n.OPTIONAL_STEP + 4,))
-            assert m.uc.reg_read(UC_ARM64_REG_SP) == m.initial_sp
+            m.run(n.OPTIONAL_STEP, (n.OPTIONAL_STEP + 8,))
             if byte & 8:
+                assert m.uc.reg_read(UC_ARM64_REG_SP) == m.initial_sp - 0x30
                 assert not m.next_calls and m.pac == 1
             else:
+                assert m.uc.reg_read(UC_ARM64_REG_SP) == m.initial_sp
                 assert m.next_calls == [CONTEXT] and m.pac == 0
             cases += 1
 
@@ -184,6 +209,62 @@ def check(image):
             assert m.uc.reg_read(UC_ARM64_REG_SP) == m.initial_sp and m.pac == 0
             cases += 1
 
+        for binding, destination in (
+                ('SET_EXT_ADV', 0x100c313f0), ('SET_SPEC_ADV', 0x100c313a9),
+                ('SET_ADV_HANDLES', 0x100c2c4b0), ('SET_ENH_CONNECTION', 0x100c3225a),
+                ('SET_EXT_SCAN', 0x100c37f85), ('SET_CODED_SCAN', 0x100c37f81),
+                ('SET_PERIODIC_ADV', 0x100c32120), ('SET_PERIODIC_SYNC', 0x100c263b0)):
+            for value in (0, 6 if binding == 'SET_ADV_HANDLES' else 1):
+                m = Machine(image, slide)
+                m.write(destination, b'\xa5')
+                m.uc.reg_write(UC_ARM64_REG_X0, value)
+                m.run(n.NATIVE_BINDINGS[binding])
+                assert m.read(destination, 1) == bytes([value])
+                assert m.uc.reg_read(UC_ARM64_REG_SP) == m.initial_sp
+                cases += 1
+
+        for name, offset in n.CAP_OFFSETS.items():
+            m = Machine(image, slide)
+            value = 6 if name == 'adv_sets' else 1
+            m.write(n.NATIVE_STATE + offset, struct.pack('<I', value) if name == 'adv_sets' else bytes([value]))
+            getter = int(image.entries['get_' + name], 16)
+            m.run(getter)
+            assert m.uc.reg_read(UC_ARM64_REG_X0) == value
+            slot = n.MODEL_VTABLE + n.MODEL_CAPABILITIES[name]
+            raw = struct.unpack_from('<Q', image.data, image.offset(slot))[0]
+            assert raw >> 32 == image.fixups[slot] >> 32
+            assert n.BASE + (raw & 0xffffffff) == getter
+            cases += 1
+
+        for kind, entry in enumerate((0x10032a91c, 0x10032a784)):
+            for status, parameters in ((0, STACK + 0x100), (0x12, STACK + 0x100), (0, 0)):
+                m = Machine(image, slide)
+                features = (1 << 12) | (1 << 11) | (1 << 8)
+                m.uc.mem_write(STACK + 0x100, struct.pack('<QQQ', features, 0, 0))
+                m.uc.reg_write(UC_ARM64_REG_X0, status)
+                if kind:
+                    from unicorn.arm64_const import UC_ARM64_REG_X2
+                    m.uc.reg_write(UC_ARM64_REG_X1, 1)
+                    m.uc.reg_write(UC_ARM64_REG_X2, parameters)
+                else:
+                    m.uc.reg_write(UC_ARM64_REG_X1, parameters)
+                m.run(entry)
+                assert m.publish_calls == [(status, kind, parameters)]
+                if status == 0 and parameters:
+                    assert m.read(n.LE_FEATURES, 8) == struct.pack('<Q', features)
+                assert m.uc.reg_read(UC_ARM64_REG_SP) == m.initial_sp and m.pac == 0
+                assert image.word(entry) == n.PACIBSP
+                cases += 1
+
+        m = Machine(image, slide)
+        m.uc.reg_write(UC_ARM64_REG_X0, STACK + 0x100)
+        m.run(n.ADV_START, (n.ADV_START + 8,))
+        assert m.prepare_calls == [STACK + 0x100]
+        assert m.uc.reg_read(UC_ARM64_REG_X0) == STACK + 0x100
+        assert m.uc.reg_read(UC_ARM64_REG_SP) == m.initial_sp - 0x50 and m.pac == 1
+        assert image.word(n.ADV_START) == n.PACIBSP
+        cases += 1
+
     # Machine code edits cannot silently touch existing functions or fixups.
     permitted = set(range(image.offset(n.CAVE), image.offset(image.cursor)))
     for patch in image.patches:
@@ -193,6 +274,7 @@ def check(image):
     for site in n.FACTORIES:
         assert image.word(site) == n.mov_w(1, 0)
     assert image.descriptor(0x203b) == (0xd1, 0x2480)
+    assert image.word(n.OPTIONAL_STEP) == n.PACIBSP
     return cases
 
 
@@ -201,7 +283,7 @@ def main():
     parser.add_argument('image', type=Path)
     parser.add_argument('--output', type=Path, default=Path(__file__).resolve().parents[1] / 'out/native-test')
     args = parser.parse_args()
-    image = n.NativeImage(args.image).vendor_routing().h4_shutdown()
+    image = n.NativeImage(args.image).vendor_routing().h4_shutdown().capability_adapter()
     cases = check(image)
     with TemporaryDirectory() as directory:
         wrong = Path(directory) / 'bluetoothd'
@@ -219,7 +301,7 @@ def main():
                   simulated='actual original and patched AArch64 instructions at two ASLR slides',
                   pointer_authentication='PAC operations modeled without target keys', hardware_verified=False)
     (args.output / 'report.json').write_text(json.dumps(report, indent=2) + '\n')
-    print(f'Native routing and H4 shutdown: {cases} instruction cases passed at two ASLR slides')
+    print(f'Native routing, capability ABI and H4 shutdown: {cases} instruction cases passed at two ASLR slides')
 
 
 if __name__ == '__main__':
