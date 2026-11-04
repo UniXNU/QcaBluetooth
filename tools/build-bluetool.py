@@ -32,7 +32,7 @@ if not cdhash:
     raise SystemExit('Signed BlueTool has no CDHash')
 job = {'Label': 'com.apple.BlueTool', 'ProgramArguments': ['/usr/sbin/BlueTool', '-R'],
        'MachServices': {'com.apple.BlueTool': True}, 'UserName': 'root',
-       'ProcessType': 'Interactive', 'ThrottleInterval': 3}
+       'POSIXSpawnType': 'Interactive', 'EnableTransactions': True, 'EnablePressuredExit': False, 'ThrottleInterval': 3}
 (out/'com.apple.BlueTool.plist').write_bytes(plistlib.dumps(job))
 (out/'report.json').write_text(json.dumps(dict(built=True, target='arm64e-apple-ios27.0',
     hardware_verified=False, cdhash=cdhash[1], inputs={'BlueTool.c': hashlib.sha256(source.read_bytes()).hexdigest()},
