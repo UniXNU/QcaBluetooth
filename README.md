@@ -11,6 +11,8 @@ Linux `btqca.c` startup sequence and Apple's native Bluetooth protocol stack.
   4096-byte TX buffer. The board supplies mapped DMA addresses and IRQ masking.
 - `include/qbt_transport.h`: UART.SK kernel pipe, ring backpressure, channel
   lifetime and worker power requests through `kern.sheng_bt_control`.
+  Shutdown and faults wake both channel rings; sync callbacks return the controller
+  error, and closed controllers stop accepting queued traffic.
 - `userland/BlueTool.c`: `com.apple.BlueTool` XPC bootstrap service. Pairing,
   key storage, BLE and audio profiles run in the system's `bluetoothd`.
 - `tools/build-userland.py`: signed native daemon and bootstrap/library bundle,
