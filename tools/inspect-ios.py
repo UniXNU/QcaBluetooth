@@ -8,7 +8,8 @@ class Image:
         self.data=Path(path).read_bytes();d=self.data
         if d[:4]!=b'\xcf\xfa\xed\xfe':raise ValueError('requires a thin 64-bit Mach-O')
         _,self.cpu,self.subtype,_,count,_,_,_=struct.unpack_from('<8I',d)
-        self.segments=[];self.sections=[];self.functions=[];self.uuid=None;at=32;starts=None
+        self.segments=[];self.sections=[];self.functions=[];self.uuid=None;at=32;starts=None;symtab=None;indirect=None
+        self.load_commands_end=32+struct.unpack_from('<I',d,20)[0]
         for _ in range(count):
             cmd,size=struct.unpack_from('<II',d,at)
             if size<8 or at+size>len(d):raise ValueError('invalid load command')
@@ -17,11 +18,29 @@ class Image:
                 self.segments.append((name.rstrip(b'\0').decode(),va,vs,off,fs))
                 for i in range(n):
                     sname,seg,addr,nbytes,offset=struct.unpack_from('<16s16sQQI',d,at+72+i*80)
-                    self.sections.append(dict(name=sname.rstrip(b'\0').decode(),segment=seg.rstrip(b'\0').decode(),address=addr,size=nbytes,offset=offset))
+                    flags,r1,r2=struct.unpack_from('<III',d,at+72+i*80+64)
+                    self.sections.append(dict(name=sname.rstrip(b'\0').decode(),segment=seg.rstrip(b'\0').decode(),address=addr,size=nbytes,offset=offset,flags=flags,reserved1=r1,reserved2=r2))
             elif cmd==0x1b:self.uuid=str(uuid.UUID(bytes=d[at+8:at+24])).upper()
             elif cmd==0x26:starts=struct.unpack_from('<II',d,at+8)
+            elif cmd==2:symtab=struct.unpack_from('<4I',d,at+8)
+            elif cmd==0xb:indirect=struct.unpack_from('<II',d,at+56)
             at+=size
         self.base=next(v for name,v,_,_,_ in self.segments if name=='__TEXT')
+        self.stubs={}
+        if symtab and indirect:
+            symoff,count,stroff,strsize=symtab;inoff,incount=indirect
+            for s in self.sections:
+                if s['flags']&255!=8 or not s['reserved2']:continue
+                for i in range(s['size']//s['reserved2']):
+                    index=s['reserved1']+i
+                    if index>=incount:raise ValueError('indirect symbol index outside table')
+                    n=struct.unpack_from('<I',d,inoff+index*4)[0]
+                    if n&0xc0000000:continue
+                    if n>=count:raise ValueError('symbol index outside table')
+                    name=struct.unpack_from('<I',d,symoff+n*16)[0]
+                    if name>=strsize:raise ValueError('symbol string outside table')
+                    end=d.index(0,stroff+name,stroff+strsize)
+                    self.stubs[d[stroff+name:end].decode()]=s['address']+i*s['reserved2']
         if starts:
             at,end=starts[0],sum(starts);address=self.base
             while at<end:
@@ -35,6 +54,11 @@ class Image:
         for _,va,_,off,size in self.segments:
             if off<=offset<off+size:return va+offset-off
         return None
+    def offset(self,address):
+        for _,va,_,off,size in self.segments:
+            if va<=address<va+size:return off+address-va
+        raise ValueError('unbacked virtual address: '+hex(address))
+    def word(self,address):return struct.unpack_from('<I',self.data,self.offset(address))[0]
     def function(self,address):
         i=bisect.bisect_right(self.functions,address)-1
         if i<0:return None
@@ -42,7 +66,9 @@ class Image:
     def inspect(self):
         terms=['com.apple.uart.sk.bluetooth','transport-encoding','transport-speed','THIRD_PARTY_DONGLE',
                'Invalid chipset %d','RunBuiltinScript','com.apple.BlueTool','initCmdReadLeLocalSupportedFeaturesCB',
-               'BCM_4357','SupportsMultipleAdvertising','initCoreStack']
+               'BCM_4357','SupportsMultipleAdvertising','initCoreStack','initCmdReadSupportedCommandsCB',
+               'initCmdReadLeAllLocalSupportedFeaturesCB','initCmdReadLocalFeaturesCB',
+               'OI_HCICMD_WriteDefaultErroneousDataReporting']
         targets={};strings={};d=self.data
         for term in terms:
             raw=term.encode()+b'\0';at=0;strings[term]=[]
@@ -73,7 +99,8 @@ class Image:
                     target=page+(((nxt>>10)&0xfff)<<(12 if nxt&(1<<22) else 0))
                     if target in targets:refs.append(dict(at=hex(pc+delta),target=hex(target),terms=targets[target],function=self.function(pc)))
         return dict(sha256=hashlib.sha256(d).hexdigest(),uuid=self.uuid,cpu=self.cpu,subtype=hex(self.subtype),
-                    strings=strings,references=refs,function_count=len(self.functions))
+                    strings=strings,references=refs,function_count=len(self.functions),load_commands_end=hex(self.load_commands_end),
+                    stubs={name:hex(va) for name,va in self.stubs.items()})
 
 if __name__=='__main__':
     p=argparse.ArgumentParser(description=__doc__);p.add_argument('image',type=Path);p.add_argument('--output',type=Path,required=True);a=p.parse_args()
