@@ -99,7 +99,7 @@ int qbt_boot(struct qbt *q,uint32_t speed,const uint8_t address[6]) {
     if(!e)e=qca_uart_setup(&h,baud,QCA_WCN7850,version,NULL,NULL);
     if(!e) {
         q->ibs=true;q->tx_state=QBT_ASLEEP;q->rx_awake=false;
-        bdaddr_t local;memcpy(local.b,address,6);e=qca_set_bdaddr(&h,&local);
+        bdaddr_t local;for(unsigned i=0;i<6;i++)local.b[i]=address[5-i];e=qca_set_bdaddr(&h,&local);
     }
     __atomic_store_n(&startup_owner,NULL,__ATOMIC_RELEASE);q->info.error=e;q->info.state=e?3:2;
     if(e) {q->ibs=false;q->command_length=q->command_offset=0;q->retry_at=q->idle_at=0;}

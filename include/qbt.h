@@ -55,6 +55,7 @@ void qbt_set_service(struct qbt *, bool);
 void qbt_rx_wake(struct qbt *);
 /* Abort command waiters promptly after a UART/DMA fault on the executor. */
 void qbt_fail(struct qbt *, int error);
+/* address uses display/network order; the Linux adapter converts to bdaddr_t. */
 int qbt_boot(struct qbt *, uint32_t baud, const uint8_t address[6]);
 int qbt_shutdown(struct qbt *);
 void qbt_get_info(const struct qbt *, struct qbt_info *);

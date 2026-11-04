@@ -47,7 +47,7 @@ static void controller(struct fixture *f,const uint8_t *p,unsigned n){
                 }f->downloaded_length=0;
             } else if(f->download_mode==1||f->download_mode==3)return;
         }
-    } else if(op==0xfc14){const uint8_t expected[]={6,5,4,3,2,2};assert(!memcmp(param,expected,6));f->address_written=true;}
+    } else if(op==0xfc14){const uint8_t expected[]={2,2,3,4,5,7};assert(!memcmp(param,expected,6));f->address_written=true;}
     else if(op==0x1009){length=7;memset(response+1,0x42,6);}
     if(f->failed_opcode==op)response[0]=1;
     complete(f,op,response,length);
@@ -113,7 +113,7 @@ static void make(struct fixture *f,unsigned mode){
     struct qbt_platform p={.context=f,.allocate=allocate,.release=release,.now_ns=now,.uart_write=write_uart,.uart_drained=drained,.uart_speed=speed,.uart_flow=flow,.clock=clock_vote,.pump=pump,.wait_until=wait_until,.receive=receive,.firmware_get=firmware,.firmware_put=firmware_put};
     f->q=qbt_create(&p);assert(f->q);
 }
-static int boot(struct fixture *f){const uint8_t address[]={2,2,3,4,5,6};return qbt_boot(f->q,3200000,address);}
+static int boot(struct fixture *f){const uint8_t address[]={2,2,3,4,5,7};return qbt_boot(f->q,3200000,address);}
 static void destroy(struct fixture *f){qbt_destroy(f->q);assert(f->allocations==f->frees);}
 static void drive(struct fixture *f,unsigned steps){for(unsigned i=0;i<steps;i++){pump(f);qbt_step(f->q);if(f->q->info.state==3)return;uint64_t d=qbt_deadline(f->q);if(d==UINT64_MAX){if(drained(f))return;d=f->tx_done;}if(!d)d=f->now+1000;wait_until(f,d);}}
 static void initialization(void){
