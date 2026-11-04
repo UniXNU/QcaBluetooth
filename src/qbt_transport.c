@@ -81,6 +81,12 @@ static void bt_sk_notify(kern_channel_ring_t ring)
     if(!--bt_sk.busy && bt_sk.closing) wakeup(&bt_sk.busy);
     lck_mtx_unlock(&bt_sk_lock);
 }
+/* Called with the transport lock held by both sync callbacks. */
+static errno_t bt_sk_io_status(void)
+{
+    if(!bt_sk.connected || bt_sk.closing) return ENOTCONN;
+    return bt_sk.boot<0?EAGAIN:bt_sk.boot;
+}
 
 /* UART owner side. rx_put returns the bytes taken: all of them while no
  * RX ring exists (discarded), else what fits in the FIFO. */
@@ -88,7 +94,7 @@ uint32_t qbt_transport_receive(const uint8_t *data,uint32_t n)
 {
     if(!n) return 0;
     lck_mtx_lock(&bt_sk_lock);
-    if(!bt_sk.rxring || bt_sk.closing) {
+    if(!bt_sk.rxring || bt_sk.closing || bt_sk.boot) {
         bt_sk.rx_dropped+=n;lck_mtx_unlock(&bt_sk_lock);return n;
     }
     if(n>BT_SK_FIFO-bt_sk.rx_len) n=BT_SK_FIFO-bt_sk.rx_len;
@@ -161,6 +167,8 @@ static errno_t bt_sk_sync_tx(kern_nexus_provider_t prov __unused,kern_nexus_t ne
     kern_channel_slot_t prev=NULL,slot;
     errno_t error=0;
     lck_mtx_lock(&bt_sk_lock);
+    error=bt_sk_io_status();
+    if(error) {lck_mtx_unlock(&bt_sk_lock);return error;}
     for(slot=kern_channel_get_next_slot(ring,NULL,NULL);slot && !bt_sk.closing;slot=kern_channel_get_next_slot(ring,slot,NULL)) {
         kern_packet_t ph=kern_channel_slot_get_packet(ring,slot);
         if(ph) {
@@ -188,6 +196,8 @@ static errno_t bt_sk_sync_rx(kern_nexus_provider_t prov __unused,kern_nexus_t ne
     kern_channel_slot_t prev=NULL,slot;kern_pbufpool_t pool=NULL;
     if(kern_nexus_get_pbufpool(nexus,NULL,&pool) || !pool) return 0;
     lck_mtx_lock(&bt_sk_lock);
+    errno_t error=bt_sk_io_status();
+    if(error) {lck_mtx_unlock(&bt_sk_lock);return error;}
     (void)kern_channel_reclaim(ring);
     for(slot=kern_channel_get_next_slot(ring,NULL,NULL);slot && bt_sk.rx_len && !bt_sk.closing;slot=kern_channel_get_next_slot(ring,slot,NULL)) {
         kern_packet_t ph=0;
@@ -416,9 +426,23 @@ void qbt_transport_power_result(bool enabled,int error,const char *firmware,uint
     bt_sk.boot=error?error:enabled?0:ENETDOWN;
     if(!enabled || error)bt_sk.rx_head=bt_sk.rx_len=bt_sk.tx_head=bt_sk.tx_len=0;
     bt_sk.power_pending=false;bt_sk.power_result=error;
+    kern_channel_ring_t rx=NULL,tx=NULL;
+    if(bt_sk.boot && bt_sk.connected && !bt_sk.closing) {
+        rx=bt_sk.rxring;tx=bt_sk.txring;
+        if(rx || tx) ++bt_sk.busy;
+    }
     lck_mtx_unlock(&bt_sk_lock);
     wakeup(&bt_sk.boot);
     wakeup(&bt_sk.power_pending);
+    /* Wake blocked channel users so their next sync observes the error. The
+     * busy reference keeps both rings alive until notifications finish. */
+    if(rx) (void)kern_channel_notify(rx,0);
+    if(tx && tx!=rx) (void)kern_channel_notify(tx,0);
+    if(rx || tx) {
+        lck_mtx_lock(&bt_sk_lock);
+        if(!--bt_sk.busy && bt_sk.closing) wakeup(&bt_sk.busy);
+        lck_mtx_unlock(&bt_sk_lock);
+    }
     bt_kick();
 }
 void qbt_transport_boot_result(int error,const char *firmware,uint32_t speed)
