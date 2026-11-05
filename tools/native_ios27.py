@@ -27,6 +27,13 @@ UNKNOWN_PRODUCT_CHECK = 0x10050c204
 HOST_BUFFER_STATUS = 0x10032affc
 HOST_FLOW_UNSUPPORTED = 0x10032b034
 ERRONEOUS_STATUS = 0x10032b0f0
+ADDRESS_REFRESH = 0x1003a77e8
+ADV_ADDRESS_CACHED = 0x1000dd7bc
+ADDRESS_FALLBACK = 0x1003a7bfc
+ADDRESS_FINISH = 0x1003a7b64
+ADDRESS_RETURN = 0x1003a7b78
+COMMAND_SUBMIT = 0x1000648b8
+SET_RANDOM_ADDRESS = 0xa5
 REGISTER = 0x100377d28
 REGISTERED_CHIP = 0x100c1e994
 REGISTERED_CONTEXT = 0x100c2c238
@@ -272,6 +279,26 @@ class NativeImage(_inspect.Image):
         self.put(HOST_BUFFER_STATUS, [0xaa1f03e0], [0xaa1303e0])
         self.put(HOST_FLOW_UNSUPPORTED, [0xd503201f], [0x540001c1])
         self.put(ERRONEOUS_STATUS, [0xaa1f03e0], [0xaa1303e0])
+        # A scan can be queued while the native refresh still sends its per-set addresses, and
+        # its own address is random: enabling it without 0x2005 returns Invalid Parameters.
+        # Queue the same address first. The native completion stays on the last 0x2005.
+        target = 0x1003a69f8
+        start = self.cursor
+        skip = start + 8 * 4
+        entry = self.emit('address_first', [lambda pc: branch(pc, target, True), 0x39400268,
+            lambda pc: 0x34000008 | relative(pc, skip, 19) << 5, 0x91000668, 0xf90003e8,
+            0xaa1f03e1, mov_w(0, SET_RANDOM_ADDRESS), lambda pc: branch(pc, COMMAND_SUBMIT, True),
+            lambda pc: branch(pc, ADDRESS_REFRESH + 4)])
+        self.put(ADDRESS_REFRESH, [branch(ADDRESS_REFRESH, entry)], [branch(ADDRESS_REFRESH, target, True)])
+        # The refresh caches each set's address even when the controller rejects it because the
+        # set does not exist yet (0x42). Starting that set then skips 0x2035 as already current,
+        # and enabling it returns Invalid Parameters forever. Always send the address.
+        self.put(ADV_ADDRESS_CACHED, [0xd503201f], [0x54000320])
+        # When no resolvable address can be generated, the refresh falls back and returns without
+        # clearing its busy flag, so the next advertising update restarts the daemon after 10 s
+        # (reason 4074). Leave through the native finish that a refresh without 0x2005 uses.
+        self.put(ADDRESS_FALLBACK, [branch(ADDRESS_FALLBACK, ADDRESS_FINISH)],
+                 [branch(ADDRESS_FALLBACK, ADDRESS_RETURN)])
         # Preserve the native bound (1..6000), adding exactly type zero.
         start = self.cursor
         entry = self.emit('registration', [lambda pc: cbnz(pc, 0, start + 8),

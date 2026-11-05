@@ -283,6 +283,10 @@ def check(image):
     assert image.word(n.UNKNOWN_PRODUCT_CHECK) == 0xd503201f
     assert image.word(n.HOST_BUFFER_STATUS) == 0xaa1f03e0 and image.word(n.ERRONEOUS_STATUS) == 0xaa1f03e0
     assert image.word(n.HOST_FLOW_UNSUPPORTED) == 0xd503201f
+    assert n.struct.unpack_from('<HH', image.data, image.offset(n.DESCRIPTORS + n.SET_RANDOM_ADDRESS * 24) + 2)[0] == 0x2005
+    assert image.word(n.ADDRESS_REFRESH) >> 26 == 5
+    assert image.word(n.ADV_ADDRESS_CACHED) == 0xd503201f
+    assert image.word(n.ADDRESS_FALLBACK) == n.branch(n.ADDRESS_FALLBACK, n.ADDRESS_FINISH)
     cases += 1
     assert image.word(n.VIRTUAL_MACHINE_CHECK) == n.mov_w(0, 0) and image.word(n.VIRTUAL_MACHINE_CHECK + 4) == n.RET
     cases += 1
