@@ -14,7 +14,8 @@ static uint32_t rd(struct qbt_geni *g, uint32_t r) { return g->ops.read(g->ops.c
 static void wr(struct qbt_geni *g, uint32_t r, uint32_t v) { g->ops.write(g->ops.context,r,v); }
 static void barrier(struct qbt_geni *g) { g->ops.barrier(g->ops.context); }
 static void rfr(struct qbt_geni *g, bool ready) {
-    wr(g,G_MANUAL_RFR,ready?(g->flow?0:G_RFR_ON):G_RFR_OFF);
+    /* Stopped flow control deasserts RTS across a controller baud change, as Linux does. */
+    wr(g,G_MANUAL_RFR,ready&&g->flow?0:G_RFR_OFF);
 }
 static void arm_rx(struct qbt_geni *g) {
     if (g->rx_busy || g->rx_ready == QBT_GENI_RX_COUNT || g->state != QBT_GENI_RUN) return;
@@ -47,7 +48,7 @@ int qbt_geni_prepare(struct qbt_geni *g, const struct qbt_geni_ops *ops,
     if (rd(g,G_STATUS)&(G_M_ACTIVE|G_S_ACTIVE)) return -EBUSY;
     unsigned depth=(rd(g,G_HW_PARAM1)>>16)&255u;if(depth<4)return -ENXIO;
     wr(g,G_IRQ_EN,0);wr(g,G_GSI_EVENT,0);
-    wr(g,G_M_IRQ_EN,0);wr(g,G_S_IRQ_EN,0);wr(g,G_TX_IRQ_EN,0);wr(g,G_RX_IRQ_EN,0);
+    wr(g,G_M_IRQ_EN,0);wr(g,G_S_IRQ_EN,0);wr(g,G_TX_IRQ_UNSET,UINT32_MAX);wr(g,G_RX_IRQ_UNSET,UINT32_MAX);
     wr(g,G_M_CLEAR,UINT32_MAX);wr(g,G_S_CLEAR,UINT32_MAX);
     wr(g,G_TX_CLEAR,UINT32_MAX);wr(g,G_RX_CLEAR,UINT32_MAX);
     wr(g,G_CGC,rd(g,G_CGC)|0x7f);wr(g,G_DMA_CFG,rd(g,G_DMA_CFG)|0x0f);
@@ -77,8 +78,6 @@ int qbt_geni_start(struct qbt_geni *g) {
     wr(g,G_TX_CLEAR,UINT32_MAX);wr(g,G_RX_CLEAR,UINT32_MAX);
     wr(g,G_M_IRQ_EN,G_DONE|G_CMD_ERRORS|(1u<<31));
     wr(g,G_S_IRQ_EN,G_CMD_ERRORS|G_LINE_ERRORS|(1u<<4)|(1u<<5));
-    wr(g,G_TX_IRQ_EN,G_DONE|G_EOT|G_DMA_ERROR);
-    wr(g,G_RX_IRQ_EN,G_DONE|G_EOT|G_DMA_ERROR);
     g->state=QBT_GENI_RUN;
     /* Linux starts the secondary sequencer with UART_PARAM_RFR_OPEN. */
     wr(g,G_S_CMD,(1u<<27)|(1u<<7));arm_rx(g);wr(g,G_IRQ_EN,G_IRQ_MASK);barrier(g);
@@ -116,7 +115,8 @@ bool qbt_geni_service(struct qbt_geni *g) {
         g->fault_irq[0]=mi;g->fault_irq[1]=si;g->fault_irq[2]=ti;g->fault_irq[3]=ri;
     }
     if((mi|si)&G_CMD_ERRORS || (ti|ri)&G_DMA_ERROR) {g->stats.dma_errors++;fail(g,-EIO);return false;}
-    if((si&G_LINE_ERRORS) || (ri&((1u<<5)|(3u<<7)))) {g->stats.line_errors++;fail(g,-EILSEQ);return false;}
+    /* Line errors drop or mark received data; the transport keeps running, as in Linux. */
+    if((si&G_LINE_ERRORS) || (ri&((1u<<5)|(3u<<7))))g->stats.line_errors++;
     if(g->tx_busy && (ti&G_DONE)) {
         g->ops.sync(g->ops.context,&g->tx,g->tx_length,false,true);
         g->stats.tx_bytes+=g->tx_length;g->stats.tx_dma++;g->tx_length=0;g->tx_busy=false;
@@ -125,7 +125,8 @@ bool qbt_geni_service(struct qbt_geni *g) {
         unsigned n=rd(g,G_RX_LEN_IN),i=g->rx_active;
         g->rx_busy=false;
         if(n>QBT_GENI_RX_SIZE){g->stats.dma_errors++;fail(g,-EOVERFLOW);return false;}
-        g->ops.sync(g->ops.context,&g->rx[i],QBT_GENI_RX_SIZE,false,false);
+        g->ops.sync(g->ops.context,&g->rx[i],n,false,false);
+        if(ri&(1u<<5))n=0; /* Parity failure: drop this completion. */
         g->stats.rx_dma++;g->stats.rx_bytes+=n;
         if(n){g->rx_length[i]=n;g->rx_ready++;}
         if(g->rx_ready==QBT_GENI_RX_COUNT){rfr(g,false);g->stats.rx_pauses++;}
@@ -159,7 +160,8 @@ bool qbt_geni_service(struct qbt_geni *g) {
 }
 bool qbt_geni_drained(struct qbt_geni *g) {
     if(g->tx_busy)return false;
-    return !(rd(g,G_STATUS)&G_M_ACTIVE) && !rd(g,G_TX_FIFO_STATUS) && !rd(g,G_TX_GP_LEN);
+    /* M_GP_LENGTH keeps the finished command's byte count; it is not a pending count. */
+    return !(rd(g,G_STATUS)&G_M_ACTIVE) && !rd(g,G_TX_FIFO_STATUS);
 }
 size_t qbt_geni_write(struct qbt_geni *g,const uint8_t *bytes,size_t n) {
     if(g->state!=QBT_GENI_RUN || !bytes || !n || !qbt_geni_drained(g))return 0;
@@ -167,6 +169,7 @@ size_t qbt_geni_write(struct qbt_geni *g,const uint8_t *bytes,size_t n) {
     memcpy(g->tx.bytes,bytes,n);g->ops.sync(g->ops.context,&g->tx,n,true,true);
     g->tx_busy=true;g->tx_length=(unsigned)n;
     wr(g,G_TX_LEN,(uint32_t)n);wr(g,G_M_CMD,1u<<27);
+    wr(g,G_TX_IRQ_SET,G_DONE|G_EOT|G_DMA_ERROR);
     wr(g,G_TX_PTR_L,(uint32_t)g->tx.address);wr(g,G_TX_PTR_H,(uint32_t)(g->tx.address>>32));
     wr(g,G_TX_ATTR,1);barrier(g);wr(g,G_TX_DMA_LEN,(uint32_t)n);barrier(g);return n;
 }

@@ -41,7 +41,6 @@
 #define G_TX_FIFO_STATUS 0x800u
 #define G_RX_WM 0x810u
 #define G_RX_RFR_WM 0x814u
-#define G_TX_GP_LEN 0x910u
 #define G_TX_PTR_L 0xc30u
 #define G_TX_PTR_H 0xc34u
 #define G_TX_ATTR 0xc38u
@@ -50,6 +49,7 @@
 #define G_TX_CLEAR 0xc44u
 #define G_TX_IRQ_EN 0xc48u
 #define G_TX_IRQ_SET 0xc4cu
+#define G_TX_IRQ_UNSET 0xc50u
 #define G_RX_PTR_L 0xd30u
 #define G_RX_PTR_H 0xd34u
 #define G_RX_ATTR 0xd38u
@@ -58,6 +58,7 @@
 #define G_RX_CLEAR 0xd44u
 #define G_RX_IRQ_EN 0xd48u
 #define G_RX_IRQ_SET 0xd4cu
+#define G_RX_IRQ_UNSET 0xd50u
 #define G_RX_LEN_IN 0xd54u
 #define G_RX_RESET 0xd58u
 #define G_GSI_EVENT 0xe18u
@@ -77,6 +78,5 @@
 #define G_LINE_ERRORS ((3u<<9)|(3u<<11)|(3u<<24))
 #define G_IRQ_MASK 0x0fu
 #define G_RFR_OFF 0x80000002u
-#define G_RFR_ON 0x80000001u
 #define G_STOP_TIMEOUT_NS 10000000ULL
 #endif

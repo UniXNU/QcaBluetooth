@@ -27,7 +27,7 @@ static void write_reg(void *p,uint32_t r,uint32_t v) {
     else f->regs[r/4]=v;
     if(r==G_S_CMD)f->regs[G_STATUS/4]|=G_S_ACTIVE;
     if(r==G_M_CMD)f->regs[G_STATUS/4]|=G_M_ACTIVE;
-    if(r==G_TX_DMA_LEN){assert(f->device_tx);f->sent_length=v;memcpy(f->sent,f->tx,v);}
+    if(r==G_TX_DMA_LEN){assert(f->device_tx);f->sent_length=v;memcpy(f->sent,f->tx,v);f->regs[0x910/4]=v;}
     if(r==G_RX_DMA_LEN)assert(f->device_rx[f->g.rx_active]);
 }
 static void barrier(void *p) { ((struct fixture *)p)->barriers++; }
@@ -75,6 +75,7 @@ static void test_tx(void) {
     struct fixture f;prepare(&f);const uint8_t b[]={1,3,12,0};
     assert(qbt_geni_write(&f.g,b,sizeof(b))==sizeof(b));assert(f.device_tx);
     assert(!memcmp(f.sent,b,sizeof(b)));assert(f.regs[G_TX_PTR_H/4]==1);
+    assert(f.regs[G_TX_IRQ_SET/4]==(G_DONE|G_EOT|G_DMA_ERROR));
     assert(!qbt_geni_write(&f.g,b,sizeof(b)));assert(!qbt_geni_drained(&f.g));
     /* DMA completion can precede the last bit leaving the UART. */
     f.regs[G_TX_IRQ/4]|=G_DONE;irq(&f);qbt_geni_service(&f.g);
@@ -82,7 +83,10 @@ static void test_tx(void) {
     f.regs[G_STATUS/4]&=~G_M_ACTIVE;f.regs[G_M_IRQ/4]|=G_DONE;
     irq(&f);qbt_geni_service(&f.g);assert(qbt_geni_drained(&f.g));
     assert(f.g.stats.tx_bytes==sizeof(b) && f.g.stats.tx_dma==1);
-    qbt_geni_set_flow(&f.g,false);assert(f.regs[G_TX_CFG/4]&2);assert(f.regs[G_MANUAL_RFR/4]==G_RFR_ON);
+    /* Hardware retains M_GP_LENGTH after completion; the next command still starts. */
+    assert(f.regs[0x910/4]==sizeof(b));assert(qbt_geni_write(&f.g,b,sizeof(b))==sizeof(b));
+    f.regs[G_TX_IRQ/4]|=G_DONE;f.regs[G_STATUS/4]&=~G_M_ACTIVE;irq(&f);qbt_geni_service(&f.g);
+    qbt_geni_set_flow(&f.g,false);assert(f.regs[G_TX_CFG/4]&2);assert(f.regs[G_MANUAL_RFR/4]==G_RFR_OFF);
     qbt_geni_set_flow(&f.g,true);assert(!(f.regs[G_TX_CFG/4]&2));assert(!f.regs[G_MANUAL_RFR/4]);
 }
 static void test_rx(void) {
@@ -117,8 +121,13 @@ static void test_faults(void) {
     assert(f.g.rx_busy); /* Outstanding DMA storage must remain pinned. */
     prepare(&f);f.regs[G_RX_IRQ/4]=G_DMA_ERROR;irq(&f);qbt_geni_service(&f.g);
     assert(f.g.state==QBT_GENI_FAILED && f.g.stats.dma_errors==1 && f.masked);
-    prepare(&f);f.regs[G_RX_IRQ/4]=1u<<5;irq(&f);qbt_geni_service(&f.g);
-    assert(f.g.error==-EILSEQ && f.g.stats.line_errors==1 && f.g.fault_irq[3]==(1u<<5));
+    /* A parity error drops its data and RX continues. */
+    prepare(&f);f.regs[G_RX_IRQ/4]=(1u<<5)|G_EOT;f.regs[G_RX_LEN_IN/4]=8;irq(&f);qbt_geni_service(&f.g);
+    assert(f.g.state==QBT_GENI_RUN && f.g.stats.line_errors==1 && f.g.fault_irq[3]==((1u<<5)|G_EOT));
+    assert(!f.length && !f.g.rx_ready && f.g.rx_busy);
+    /* A break or a line status bit is counted without stopping the transport. */
+    prepare(&f);f.regs[G_S_IRQ/4]=1u<<11;irq(&f);qbt_geni_service(&f.g);
+    assert(f.g.state==QBT_GENI_RUN && f.g.stats.line_errors==1);
     prepare(&f);f.regs[G_RX_IRQ/4]=G_DONE;f.regs[G_RX_LEN_IN/4]=QBT_GENI_RX_SIZE+1;
     irq(&f);qbt_geni_service(&f.g);assert(f.g.error==-EOVERFLOW);
 }
