@@ -52,6 +52,12 @@ static struct {
     uint64_t rx_dropped;
 } bt_sk={.boot=-1,.spec={2048,16,16}};
 
+/* Native stack activity: power requests, boot-state reads, control connects, channel requests. */
+volatile uint32_t qbt_transport_activity[4];
+static inline void bt_sk_count(unsigned index)
+{
+    (void)__atomic_add_fetch(&qbt_transport_activity[index],1u,__ATOMIC_RELAXED);
+}
 static void bt_sk_termios_default(void)
 {
     memset(&bt_sk.termios,0,sizeof(bt_sk.termios));
@@ -278,6 +284,7 @@ static errno_t bt_sk_connect(kern_ctl_ref ref __unused,struct sockaddr_ctl *sac,
     bt_sk.connected=true;bt_sk.unit=sac->sc_unit;*unitinfo=&bt_sk;
     bt_sk_termios_default();
     lck_mtx_unlock(&bt_sk_lock);
+    bt_sk_count(2);
     printf("[bluetooth sk] connect unit=%u pid=%d\n",sac->sc_unit,proc_pid(current_proc()));
     return 0;
 }
@@ -329,6 +336,7 @@ static errno_t bt_sk_setopt(kern_ctl_ref ref __unused,u_int32_t unit __unused,vo
         if(!e) {bt_sk.ncd=ncd;bt_sk.pool=pool;uuid_copy(bt_sk.provider,provider);uuid_copy(bt_sk.instance,instance);}
         wakeup(&bt_sk.creating);
         lck_mtx_unlock(&bt_sk_lock);
+        bt_sk_count(3);
         printf("[bluetooth sk] channel spec buf=%u slots=%u/%u pid=%d error=%d\n",spec[0],spec[1],spec[2],pid,e);
         return e?ENXIO:0;
     }
@@ -367,6 +375,7 @@ static int bt_sk_boot_sysctl SYSCTL_HANDLER_ARGS
 {
 #pragma unused(oidp,arg1,arg2)
     int error=0,value;
+    bt_sk_count(1);
     lck_mtx_lock(&bt_sk_lock);
     struct timespec timeout={30,0};
     while(bt_sk.boot<0 && !error) error=msleep(&bt_sk.boot,&bt_sk_lock,PZERO|PCATCH,"btboot",&timeout);
@@ -385,6 +394,7 @@ static int bt_sk_power_sysctl SYSCTL_HANDLER_ARGS
     if(!req->newptr || req->newlen!=sizeof(command))return EINVAL;
     error=SYSCTL_IN(req,&command,sizeof(command));if(error)return error;
     if(command!=0 && command!=1)return EINVAL;
+    bt_sk_count(0);
     lck_mtx_lock(&bt_sk_lock);
     if(bt_sk.power_pending || !bt_ops.power){lck_mtx_unlock(&bt_sk_lock);return EBUSY;}
     bt_sk.power_pending=true;bt_sk.power_result=EINPROGRESS;

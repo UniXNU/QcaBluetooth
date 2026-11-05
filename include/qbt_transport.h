@@ -12,6 +12,7 @@ struct qbt_transport_ops {
     /* Queue power transition on the UART worker; never call back inline. */
     int (*power)(void *, bool);
 };
+extern volatile uint32_t qbt_transport_activity[4];
 int qbt_transport_init(const struct qbt_transport_ops *);
 void qbt_transport_boot_result(int error, const char *firmware, uint32_t baud);
 void qbt_transport_power_result(bool enabled, int error, const char *firmware, uint32_t baud);
