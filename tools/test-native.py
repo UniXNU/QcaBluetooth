@@ -281,6 +281,8 @@ def check(image):
     assert image.word(entry) == n.mov_w(1, 0) and image.word(entry + 4) == n.branch(entry + 4, n.CONTROLLER_INIT)
     cases += 1
     assert image.word(n.UNKNOWN_PRODUCT_CHECK) == 0xd503201f
+    assert image.word(n.HOST_BUFFER_STATUS) == 0xaa1f03e0 and image.word(n.ERRONEOUS_STATUS) == 0xaa1f03e0
+    assert image.word(n.HOST_FLOW_UNSUPPORTED) == 0xd503201f
     cases += 1
     assert image.word(n.VIRTUAL_MACHINE_CHECK) == n.mov_w(0, 0) and image.word(n.VIRTUAL_MACHINE_CHECK + 4) == n.RET
     cases += 1

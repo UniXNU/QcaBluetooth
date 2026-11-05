@@ -24,6 +24,9 @@ CONTROLLER_THUNK = 0x1004a5290
 CONTROLLER_INIT = 0x1004a4560
 VIRTUAL_MACHINE_CHECK = 0x10056a12c
 UNKNOWN_PRODUCT_CHECK = 0x10050c204
+HOST_BUFFER_STATUS = 0x10032affc
+HOST_FLOW_UNSUPPORTED = 0x10032b034
+ERRONEOUS_STATUS = 0x10032b0f0
 REGISTER = 0x100377d28
 REGISTERED_CHIP = 0x100c1e994
 REGISTERED_CONTEXT = 0x100c2c238
@@ -264,6 +267,11 @@ class NativeImage(_inspect.Image):
         # The board's ADT carries vmm-present for other components. This daemon reads it
         # as "skip chip initialization", so the controller would never be booted.
         self.put(VIRTUAL_MACHINE_CHECK, [mov_w(0, 0), RET], [0xf0003688, 0xf942b108])
+        # Host flow control and erroneous data reporting are optional for the stack.
+        # The callbacks still log a rejection; initialization continues without them.
+        self.put(HOST_BUFFER_STATUS, [0xaa1f03e0], [0xaa1303e0])
+        self.put(HOST_FLOW_UNSUPPORTED, [0xd503201f], [0x540001c1])
+        self.put(ERRONEOUS_STATUS, [0xaa1f03e0], [0xaa1303e0])
         # Preserve the native bound (1..6000), adding exactly type zero.
         start = self.cursor
         entry = self.emit('registration', [lambda pc: cbnz(pc, 0, start + 8),
