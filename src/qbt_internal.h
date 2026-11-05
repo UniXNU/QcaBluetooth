@@ -14,6 +14,7 @@
 #define QBT_CHUNK 2048u
 #define QBT_COMMAND_TIMEOUT 10000000000ULL
 #define QBT_WAKE_RETRY 100000000ULL
+#define QBT_TX_POLL 1000000ULL
 #define QBT_TX_IDLE 2000000000ULL
 enum { QBT_ASLEEP, QBT_WAKING, QBT_AWAKE };
 struct qbt_tx_frame { uint8_t type, header[4], have, need; unsigned body; };

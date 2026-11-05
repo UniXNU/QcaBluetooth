@@ -224,7 +224,12 @@ static int run(struct qbt *q, uint64_t deadline, unsigned predicate) {
         if ((predicate == 0 && !q->command_length) || (predicate == 1 && q->complete) ||
             (predicate == 2 && !q->command_length && drained(q))) return 0;
         uint64_t t = now(q); if (t >= deadline) { q->stats.timeouts++; return -ETIMEDOUT; }
-        uint64_t next = qbt_deadline(q); if (!next || next > deadline) next = deadline;
+        uint64_t next = qbt_deadline(q);
+        /* Wire drain has no IRQ of its own: bytes waiting on it re-check here. */
+        if (predicate == 2 || q->command_length || q->control_length) {
+            if (!next || next > t + QBT_TX_POLL) next = t + QBT_TX_POLL;
+        }
+        if (!next || next > deadline) next = deadline;
         /* UART completion and ring-space producers signal this wait. */
         q->ops.wait_until(q->ops.context, next);
     }
