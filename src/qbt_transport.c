@@ -36,6 +36,7 @@ static LCK_MTX_DECLARE(bt_sk_lock,&bt_sk_grp);
 static struct {
     kern_ctl_ref ctl;
     bool connected,creating,closing;
+    kern_nexus_t nexus;
     uint32_t unit,spec[3];
     struct bt_termios64 termios;
     nexus_controller_t ncd;
@@ -84,7 +85,7 @@ static void bt_sk_notify(kern_channel_ring_t ring)
     ++bt_sk.busy;lck_mtx_unlock(&bt_sk_lock);
     (void)kern_channel_notify(ring,0);
     lck_mtx_lock(&bt_sk_lock);
-    if(!--bt_sk.busy && bt_sk.closing) wakeup(&bt_sk.busy);
+    if(!--bt_sk.busy) wakeup(&bt_sk.busy);
     lck_mtx_unlock(&bt_sk_lock);
 }
 /* Called with the transport lock held by both sync callbacks. */
@@ -135,15 +136,20 @@ bool qbt_transport_active(void)
 /* Kernel pipe provider. */
 static errno_t bt_sk_pre_connect(kern_nexus_provider_t prov __unused,proc_t p __unused,kern_nexus_t nexus __unused,
     nexus_port_t port __unused,kern_channel_t channel __unused,void **ctx __unused) {return 0;}
-static errno_t bt_sk_connected(kern_nexus_provider_t prov __unused,kern_nexus_t nexus __unused,kern_channel_t channel __unused)
-{
-    lck_mtx_lock(&bt_sk_lock);bool valid=bt_sk.connected && !bt_sk.closing;lck_mtx_unlock(&bt_sk_lock);
-    bt_kick();return valid?0:ENXIO;
-}
-static void bt_sk_pre_disconnect(kern_nexus_provider_t prov __unused,kern_nexus_t nexus __unused,kern_channel_t channel __unused)
+static errno_t bt_sk_connected(kern_nexus_provider_t prov __unused,kern_nexus_t nexus,kern_channel_t channel __unused)
 {
     lck_mtx_lock(&bt_sk_lock);
-    bt_sk.closing=true;
+    bool valid=bt_sk.connected && !bt_sk.closing;
+    if(valid) bt_sk.nexus=nexus;
+    lck_mtx_unlock(&bt_sk_lock);
+    bt_kick();return valid?0:ENXIO;
+}
+/* bluetoothd closes the control socket before destroying its channel when it turns off, so this
+ * can arrive after bt_sk_disconnect finished. That channel no longer owns the transport state. */
+static void bt_sk_pre_disconnect(kern_nexus_provider_t prov __unused,kern_nexus_t nexus,kern_channel_t channel __unused)
+{
+    lck_mtx_lock(&bt_sk_lock);
+    if(bt_sk.nexus==nexus) bt_sk.closing=true;
     while(bt_sk.busy) (void)msleep(&bt_sk.busy,&bt_sk_lock,PZERO,"btsk",NULL);
     lck_mtx_unlock(&bt_sk_lock);
     bt_kick();
@@ -280,8 +286,8 @@ static errno_t bt_sk_create(const uint32_t spec[3],pid_t pid,nexus_controller_t 
 static errno_t bt_sk_connect(kern_ctl_ref ref __unused,struct sockaddr_ctl *sac,void **unitinfo)
 {
     lck_mtx_lock(&bt_sk_lock);
-    if(bt_sk.connected || bt_sk.closing) {lck_mtx_unlock(&bt_sk_lock);return EBUSY;}
-    bt_sk.connected=true;bt_sk.unit=sac->sc_unit;*unitinfo=&bt_sk;
+    if(bt_sk.connected) {lck_mtx_unlock(&bt_sk_lock);return EBUSY;}
+    bt_sk.connected=true;bt_sk.closing=false;bt_sk.unit=sac->sc_unit;*unitinfo=&bt_sk;
     bt_sk_termios_default();
     lck_mtx_unlock(&bt_sk_lock);
     bt_sk_count(2);
@@ -302,7 +308,9 @@ static errno_t bt_sk_disconnect(kern_ctl_ref ref __unused,u_int32_t unit,void *u
     if(ncd) bt_sk_destroy(ncd,provider,instance,pool);
     lck_mtx_lock(&bt_sk_lock);
     printf("[bluetooth sk] disconnect unit=%u rx_dropped=%llu\n",unit,bt_sk.rx_dropped);
-    bt_sk.connected=bt_sk.closing=false;
+    bt_sk.connected=bt_sk.closing=false;bt_sk.nexus=NULL;
+    /* A channel that outlives this session gets no more notifications; its ring_fini finds nothing to clear. */
+    bt_sk.rxring=bt_sk.txring=NULL;
     bt_sk.rx_head=bt_sk.rx_len=bt_sk.tx_head=bt_sk.tx_len=0;
     bt_sk.spec[0]=2048;bt_sk.spec[1]=bt_sk.spec[2]=16;
     lck_mtx_unlock(&bt_sk_lock);
@@ -450,7 +458,7 @@ void qbt_transport_power_result(bool enabled,int error,const char *firmware,uint
     if(tx && tx!=rx) (void)kern_channel_notify(tx,0);
     if(rx || tx) {
         lck_mtx_lock(&bt_sk_lock);
-        if(!--bt_sk.busy && bt_sk.closing) wakeup(&bt_sk.busy);
+        if(!--bt_sk.busy) wakeup(&bt_sk.busy);
         lck_mtx_unlock(&bt_sk_lock);
     }
     bt_kick();
