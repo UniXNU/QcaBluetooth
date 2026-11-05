@@ -38,7 +38,9 @@ python3 tools/build-type0.py
 The runtime check covers actual Linux initialization, NVM edits, firmware
 fallback, timeouts, H4 fragmentation and backpressure, and IBS at TX packet
 boundaries. The DMA check covers buffer ownership, address width, wire drain,
-flow control, quiesce/resume and faults. UART clock-restore failures terminate
+flow control, quiesce/resume and faults. GENI clears reset-time IRQ status before
+arming RX and retains live fault IRQ values. The board releases controller reset
+before starting RX. UART clock-restore failures terminate
 the transport with the original error; failed channels stop forwarding and retries. Both run with address and undefined
 behavior sanitizers. The kernel check uses the target's BSD compilation record
 and checks symbol names and availability in the built kernel.
