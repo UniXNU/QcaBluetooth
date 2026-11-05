@@ -72,6 +72,9 @@ int qbt_geni_set_rate(struct qbt_geni *g,uint32_t baud,uint32_t hz,unsigned samp
 }
 int qbt_geni_start(struct qbt_geni *g) {
     if (g->state!=QBT_GENI_STOPPED || !g->baud || g->rx_ready) return -EINVAL;
+    /* Reset-time line state is stale when the board releases the controller. */
+    wr(g,G_M_CLEAR,UINT32_MAX);wr(g,G_S_CLEAR,UINT32_MAX);
+    wr(g,G_TX_CLEAR,UINT32_MAX);wr(g,G_RX_CLEAR,UINT32_MAX);
     wr(g,G_M_IRQ_EN,G_DONE|G_CMD_ERRORS|(1u<<31));
     wr(g,G_S_IRQ_EN,G_CMD_ERRORS|G_LINE_ERRORS|(1u<<4)|(1u<<5));
     wr(g,G_TX_IRQ_EN,G_DONE|G_EOT|G_DMA_ERROR);
@@ -109,6 +112,9 @@ bool qbt_geni_service(struct qbt_geni *g) {
     uint32_t mi=rd(g,G_M_IRQ),si=rd(g,G_S_IRQ),ti=rd(g,G_TX_IRQ),ri=rd(g,G_RX_IRQ);
     if(irq)g->stats.interrupts++;
     wr(g,G_M_CLEAR,mi);wr(g,G_S_CLEAR,si);wr(g,G_TX_CLEAR,ti);wr(g,G_RX_CLEAR,ri);
+    if(((mi|si)&G_CMD_ERRORS) || ((ti|ri)&G_DMA_ERROR) || (si&G_LINE_ERRORS) || (ri&((1u<<5)|(3u<<7)))) {
+        g->fault_irq[0]=mi;g->fault_irq[1]=si;g->fault_irq[2]=ti;g->fault_irq[3]=ri;
+    }
     if((mi|si)&G_CMD_ERRORS || (ti|ri)&G_DMA_ERROR) {g->stats.dma_errors++;fail(g,-EIO);return false;}
     if((si&G_LINE_ERRORS) || (ri&((1u<<5)|(3u<<7)))) {g->stats.line_errors++;fail(g,-EILSEQ);return false;}
     if(g->tx_busy && (ti&G_DONE)) {

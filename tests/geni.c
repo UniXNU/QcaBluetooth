@@ -56,7 +56,9 @@ static void prepare(struct fixture *f) {
     assert(f->regs[G_TX_PACK1/4]==(526u|(783u<<10)));
     assert(qbt_geni_set_rate(&f->g,3200000,100000000,16)==-ERANGE);
     assert(!qbt_geni_set_rate(&f->g,115200,7372800,16));assert(f->regs[G_M_CLK/4]==0x41);
-    assert(!qbt_geni_start(&f->g));assert(!f->masked && f->g.rx_busy);
+    f->regs[G_S_IRQ/4]=1u<<11;f->regs[G_RX_IRQ/4]=3u<<7;
+    assert(!qbt_geni_start(&f->g));
+    assert(!f->regs[G_S_IRQ/4] && !f->regs[G_RX_IRQ/4]);assert(!f->masked && f->g.rx_busy);
     assert(f->regs[G_RX_PTR_H/4]==1);assert(f->regs[G_RX_DMA_LEN/4]==QBT_GENI_RX_SIZE);
 }
 static void irq(struct fixture *f) {
@@ -116,7 +118,7 @@ static void test_faults(void) {
     prepare(&f);f.regs[G_RX_IRQ/4]=G_DMA_ERROR;irq(&f);qbt_geni_service(&f.g);
     assert(f.g.state==QBT_GENI_FAILED && f.g.stats.dma_errors==1 && f.masked);
     prepare(&f);f.regs[G_RX_IRQ/4]=1u<<5;irq(&f);qbt_geni_service(&f.g);
-    assert(f.g.error==-EILSEQ && f.g.stats.line_errors==1);
+    assert(f.g.error==-EILSEQ && f.g.stats.line_errors==1 && f.g.fault_irq[3]==(1u<<5));
     prepare(&f);f.regs[G_RX_IRQ/4]=G_DONE;f.regs[G_RX_LEN_IN/4]=QBT_GENI_RX_SIZE+1;
     irq(&f);qbt_geni_service(&f.g);assert(f.g.error==-EOVERFLOW);
 }

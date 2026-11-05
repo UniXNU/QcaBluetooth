@@ -40,6 +40,7 @@ struct qbt_geni {
     unsigned rx_length[QBT_GENI_RX_COUNT], rx_offset;
     unsigned tx_length;
     uint32_t baud, source_hz, oversampling;
+    uint32_t fault_irq[4]; /* M, S, TX DMA and RX DMA status from a failed service turn. */
     uint64_t stop_deadline;
     int error;
     bool tx_busy, rx_busy, flow, irq_pending;
