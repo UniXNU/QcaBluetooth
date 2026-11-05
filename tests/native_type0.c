@@ -10,7 +10,7 @@
 static uint8_t *memory_image;
 static uint8_t model_object[0x6d0];
 static struct {
-    bool ext_adv, spec_adv, scan, connection, coded, periodic_adv, periodic_sync;
+    bool ext_adv, spec_adv, scan, scan_hci, connection, coded, periodic_adv, periodic_sync;
     uint32_t count, submit_error, submit_calls, advances, status, failures;
     const char *step;
     void *context;
@@ -25,6 +25,7 @@ void *qbt_test_memory(uintptr_t address)
 static void set_ext(bool value) { observed.ext_adv = value; }
 static void set_spec(bool value) { observed.spec_adv = value; }
 static void set_scan(bool value) { observed.scan = value; }
+static void set_scan_hci(bool value) { observed.scan_hci = value; }
 static void set_conn(bool value) { observed.connection = value; }
 static void set_coded(bool value) { observed.coded = value; }
 static void set_per_adv(bool value) { observed.periodic_adv = value; }
@@ -61,6 +62,7 @@ void *qbt_test_function(uintptr_t address)
     case QBT_SET_SPEC_ADV: return set_spec;
     case QBT_SET_ADV_HANDLES: return set_handles;
     case QBT_SET_EXT_SCAN: return set_scan;
+    case QBT_SET_EXT_SCAN_HCI: return set_scan_hci;
     case QBT_SET_ENH_CONNECTION: return set_conn;
     case QBT_SET_CODED_SCAN: return set_coded;
     case QBT_SET_PERIODIC_ADV: return set_per_adv;
@@ -109,7 +111,7 @@ static void consistent(void)
 {
     struct qbt_native_state *s = state();
     assert(observed.ext_adv == s->ext_adv && observed.spec_adv == s->spec_adv);
-    assert(observed.scan == s->ext_scan && observed.connection == s->enhanced_connection);
+    assert(!observed.scan && observed.scan_hci == s->ext_scan && observed.connection == s->enhanced_connection);
     assert(observed.coded == s->coded_phy);
     assert(observed.periodic_adv == s->periodic_adv && observed.periodic_sync == s->periodic_sync);
     assert(observed.count == s->adv_sets && s->adv_sets <= 6);

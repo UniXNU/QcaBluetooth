@@ -92,7 +92,12 @@ static void publish_flags(void)
     FN(QBT_SET_EXT_ADV, set_bool_fn)(s->ext_adv);
     FN(QBT_SET_SPEC_ADV, set_bool_fn)(s->spec_adv);
     FN(QBT_SET_ADV_HANDLES, set_count_fn)(s->adv_sets);
-    FN(QBT_SET_EXT_SCAN, set_bool_fn)(s->ext_scan);
+    /* This flag starts Apple's scan extension VSC after scan enable, which has no type zero
+     * backend. Standard extended scanning is selected only by the HCI flag below. */
+    FN(QBT_SET_EXT_SCAN, set_bool_fn)(false);
+    /* Selects 0x2041/0x2042 over 0x200b/0x200c. The controller answers Command Disallowed
+     * to legacy scan commands once extended advertising commands have been used. */
+    FN(QBT_SET_EXT_SCAN_HCI, set_bool_fn)(s->ext_scan);
     FN(QBT_SET_ENH_CONNECTION, set_bool_fn)(s->enhanced_connection);
     FN(QBT_SET_CODED_SCAN, set_bool_fn)(s->coded_phy);
     FN(QBT_SET_PERIODIC_ADV, set_bool_fn)(s->periodic_adv);

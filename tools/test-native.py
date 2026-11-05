@@ -212,7 +212,7 @@ def check(image):
         for binding, destination in (
                 ('SET_EXT_ADV', 0x100c313f0), ('SET_SPEC_ADV', 0x100c313a9),
                 ('SET_ADV_HANDLES', 0x100c2c4b0), ('SET_ENH_CONNECTION', 0x100c3225a),
-                ('SET_EXT_SCAN', 0x100c37f85), ('SET_CODED_SCAN', 0x100c37f81),
+                ('SET_EXT_SCAN', 0x100c37f85), ('SET_EXT_SCAN_HCI', 0x100c37f87), ('SET_CODED_SCAN', 0x100c37f81),
                 ('SET_PERIODIC_ADV', 0x100c32120), ('SET_PERIODIC_SYNC', 0x100c263b0)):
             for value in (0, 6 if binding == 'SET_ADV_HANDLES' else 1):
                 m = Machine(image, slide)
