@@ -12,9 +12,10 @@ extern xpc_connection_t qbt_xpc_listener(const char *,dispatch_queue_t,uint64_t)
     __asm__("_xpc_connection_create_mach_service");
 
 static os_log_t logger;
-static int controller(bool enable) {
-    int result=EIO,command=enable?1:0;size_t length=sizeof(result);
-    if(sysctlbyname("kern.sheng_bt_control",&result,&length,&command,sizeof(command)))return errno;
+static int power_on(void) {
+    int result=EIO;size_t length=sizeof(result);
+    /* A denied request is not a controller failure: UART.SK connect also starts it. */
+    if(sysctlbyname("kern.sheng_bt_power_on",&result,&length,NULL,0))return errno==EPERM?0:errno;
     return length==sizeof(result)?result:EIO;
 }
 static int state(void) {
@@ -30,8 +31,8 @@ static void handle(xpc_object_t message) {
     if(id && !strcmp(id,"RunBuiltinScript")) {
         xpc_object_t args=xpc_dictionary_get_value(message,"kMsgArgs");
         const char *script=args && xpc_get_type(args)==XPC_TYPE_DICTIONARY?xpc_dictionary_get_string(args,"script"):NULL;
-        if(script && (!strcmp(script,"boot") || !strcmp(script,"init")))error=controller(true);
-        else if(script && !strcmp(script,"deepsleep")){error=state();if(error==ENETDOWN)error=0;}
+        if(script && (!strcmp(script,"boot") || !strcmp(script,"init")))error=power_on();
+        else if(script && !strcmp(script,"deepsleep")){error=state();if(error==ENETDOWN||error==EPERM)error=0;}
         else error=EINVAL;
         os_log(logger,"script %{public}s result %d",script?script:"missing",error);
     }

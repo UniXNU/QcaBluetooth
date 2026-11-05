@@ -292,6 +292,8 @@ static errno_t bt_sk_connect(kern_ctl_ref ref __unused,struct sockaddr_ctl *sac,
     lck_mtx_unlock(&bt_sk_lock);
     bt_sk_count(2);
     printf("[bluetooth sk] connect unit=%u pid=%d\n",sac->sc_unit,proc_pid(current_proc()));
+    /* A client on a stopped controller restarts it; failures reach the client through I/O status. */
+    if(bt_sk.boot>0 && bt_ops.power)(void)bt_ops.power(bt_ops.context,true);
     return 0;
 }
 static errno_t bt_sk_disconnect(kern_ctl_ref ref __unused,u_int32_t unit,void *unitinfo __unused)
@@ -394,20 +396,20 @@ static int bt_sk_boot_sysctl SYSCTL_HANDLER_ARGS
 SYSCTL_PROC(_kern,OID_AUTO,sheng_bt_boot,CTLTYPE_INT|CTLFLAG_RD|CTLFLAG_LOCKED,NULL,0,bt_sk_boot_sysctl,"I","WCN7850 kernel bring-up result");
 SYSCTL_STRING(_kern,OID_AUTO,sheng_bt_firmware,CTLFLAG_RD|CTLFLAG_LOCKED,bt_sk.firmware,sizeof(bt_sk.firmware),"WCN7850 firmware build label");
 
-/* Root BlueTool queues each transition and waits for its worker completion. */
-static int bt_sk_power_sysctl SYSCTL_HANDLER_ARGS
+/* BlueTool's sandbox denies sysctl writes, so reading this value requests startup
+ * and waits for the worker's result. The worker keeps a running controller as it is. */
+static int bt_sk_power_on_sysctl SYSCTL_HANDLER_ARGS
 {
 #pragma unused(oidp,arg1,arg2)
-    int command=0,error=0,result=0;
-    if(!req->newptr || req->newlen!=sizeof(command))return EINVAL;
-    error=SYSCTL_IN(req,&command,sizeof(command));if(error)return error;
-    if(command!=0 && command!=1)return EINVAL;
+    int error=0,result=0;
+    if(req->newptr)return EPERM;
+    if(!req->oldptr)return SYSCTL_OUT(req,&result,sizeof(result));
     bt_sk_count(0);
     lck_mtx_lock(&bt_sk_lock);
     if(bt_sk.power_pending || !bt_ops.power){lck_mtx_unlock(&bt_sk_lock);return EBUSY;}
     bt_sk.power_pending=true;bt_sk.power_result=EINPROGRESS;
     lck_mtx_unlock(&bt_sk_lock);
-    error=bt_ops.power(bt_ops.context,command!=0);
+    error=bt_ops.power(bt_ops.context,true);
     lck_mtx_lock(&bt_sk_lock);
     if(error){bt_sk.power_pending=false;bt_sk.power_result=error;}
     struct timespec timeout={30,0};
@@ -415,7 +417,7 @@ static int bt_sk_power_sysctl SYSCTL_HANDLER_ARGS
     result=bt_sk.power_result;lck_mtx_unlock(&bt_sk_lock);
     return error?error:SYSCTL_OUT(req,&result,sizeof(result));
 }
-SYSCTL_PROC(_kern,OID_AUTO,sheng_bt_control,CTLTYPE_INT|CTLFLAG_RW|CTLFLAG_LOCKED,NULL,0,bt_sk_power_sysctl,"I","WCN7850 power transition");
+SYSCTL_PROC(_kern,OID_AUTO,sheng_bt_power_on,CTLTYPE_INT|CTLFLAG_RD|CTLFLAG_LOCKED,NULL,0,bt_sk_power_on_sysctl,"I","WCN7850 startup request");
 
 int qbt_transport_init(const struct qbt_transport_ops *ops)
 {

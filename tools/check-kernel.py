@@ -46,7 +46,7 @@ for source in sources:
 symbols = subprocess.check_output(['nm', '-g', *map(str, objects)], text=True)
 (out/'symbols.txt').write_text(symbols)
 defined = [line.split()[-1] for line in symbols.splitlines() if ' T ' in line or ' S ' in line or ' D ' in line]
-sysctls = {'_sysctl__kern_sheng_bt_'+s for s in ('boot', 'control', 'firmware')}
+sysctls = {'_sysctl__kern_sheng_bt_'+s for s in ('boot', 'power_on', 'firmware')}
 board_exports = {'_sheng_bt_firmware_read', '_sheng_bt_firmware_release'}
 unscoped = [s for s in defined if not s.startswith('_qbt_') and s not in sysctls|board_exports]
 if unscoped:
