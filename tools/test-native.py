@@ -275,6 +275,15 @@ def check(image):
         assert image.word(site) == n.mov_w(1, 0)
     assert image.descriptor(0x203b) == (0xd1, 0x2480)
     assert image.word(n.OPTIONAL_STEP) == n.PACIBSP
+    # Every product reaches the original constructor with controller type zero.
+    entry = int(image.entries['controller_type'], 16)
+    assert image.word(n.CONTROLLER_THUNK) == n.branch(n.CONTROLLER_THUNK, entry)
+    assert image.word(entry) == n.mov_w(1, 0) and image.word(entry + 4) == n.branch(entry + 4, n.CONTROLLER_INIT)
+    cases += 1
+    assert image.word(n.UNKNOWN_PRODUCT_CHECK) == 0xd503201f
+    cases += 1
+    assert image.word(n.VIRTUAL_MACHINE_CHECK) == n.mov_w(0, 0) and image.word(n.VIRTUAL_MACHINE_CHECK + 4) == n.RET
+    cases += 1
     # Keychain results no longer reach the daemon's fatal return; targets are unchanged.
     for site in n.ROOT_KEY_READS + n.ROOT_KEY_WRITES:
         assert image.word(site) >> 26 == 0b000101

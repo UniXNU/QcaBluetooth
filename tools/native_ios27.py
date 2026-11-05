@@ -20,6 +20,10 @@ SUPPORT_TABLE = 0x100cadc50
 SUPPORT_BYTES = 64
 LE_FEATURES = 0x100cadb2e
 FACTORIES = (0x10050a9dc, 0x10050bf00, 0x10050bf48)
+CONTROLLER_THUNK = 0x1004a5290
+CONTROLLER_INIT = 0x1004a4560
+VIRTUAL_MACHINE_CHECK = 0x10056a12c
+UNKNOWN_PRODUCT_CHECK = 0x10050c204
 REGISTER = 0x100377d28
 REGISTERED_CHIP = 0x100c1e994
 REGISTERED_CONTEXT = 0x100c2c238
@@ -248,6 +252,18 @@ class NativeImage(_inspect.Image):
     def vendor_routing(self):
         for site in FACTORIES:
             self.put(site, [mov_w(1, 0)], [mov_w(1, 15)])
+        # Every product's factory branch reaches this thunk: the board has a standard
+        # H4 controller whatever product identity the OS image carries.
+        entry = self.emit('controller_type', [mov_w(1, 0),
+            lambda pc: branch(pc, CONTROLLER_INIT)])
+        self.put(CONTROLLER_THUNK, [branch(CONTROLLER_THUNK, entry)],
+                 [branch(CONTROLLER_THUNK, CONTROLLER_INIT)])
+        # No factory branch lists the board's product, which would leave the model null
+        # and crash the daemon. Fall through into the last constructor call instead.
+        self.put(UNKNOWN_PRODUCT_CHECK, [0xd503201f], [0x340002a0])
+        # The board's ADT carries vmm-present for other components. This daemon reads it
+        # as "skip chip initialization", so the controller would never be booted.
+        self.put(VIRTUAL_MACHINE_CHECK, [mov_w(0, 0), RET], [0xf0003688, 0xf942b108])
         # Preserve the native bound (1..6000), adding exactly type zero.
         start = self.cursor
         entry = self.emit('registration', [lambda pc: cbnz(pc, 0, start + 8),
