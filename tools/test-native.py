@@ -275,6 +275,10 @@ def check(image):
         assert image.word(site) == n.mov_w(1, 0)
     assert image.descriptor(0x203b) == (0xd1, 0x2480)
     assert image.word(n.OPTIONAL_STEP) == n.PACIBSP
+    # Keychain results no longer reach the daemon's fatal return; targets are unchanged.
+    for site in n.ROOT_KEY_READS + n.ROOT_KEY_WRITES:
+        assert image.word(site) >> 26 == 0b000101
+        cases += 1
     return cases
 
 
@@ -283,7 +287,7 @@ def main():
     parser.add_argument('image', type=Path)
     parser.add_argument('--output', type=Path, default=Path(__file__).resolve().parents[1] / 'out/native-test')
     args = parser.parse_args()
-    image = n.NativeImage(args.image).vendor_routing().h4_shutdown().capability_adapter()
+    image = n.NativeImage(args.image).vendor_routing().volatile_root_keys().h4_shutdown().capability_adapter()
     cases = check(image)
     with TemporaryDirectory() as directory:
         wrong = Path(directory) / 'bluetoothd'

@@ -11,7 +11,7 @@ if __name__ == '__main__':
     parser.add_argument('image', type=Path)
     parser.add_argument('--output', type=Path, required=True)
     args = parser.parse_args()
-    image = NativeImage(args.image).vendor_routing().h4_shutdown().capability_adapter()
+    image = NativeImage(args.image).vendor_routing().volatile_root_keys().h4_shutdown().capability_adapter()
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_bytes(image.data)
     report = args.output.with_suffix(args.output.suffix + '.json')

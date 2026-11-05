@@ -47,7 +47,7 @@ def main():
         shutil.copyfile(source,dest);dest.chmod(0o755)
     job=plistlib.loads((build/'com.apple.BlueTool.plist').read_bytes())
     (out/'config/com.apple.BlueTool.plist').write_bytes(plistlib.dumps(job))
-    patched=image.vendor_routing().h4_shutdown().capability_adapter()
+    patched=image.vendor_routing().volatile_root_keys().h4_shutdown().capability_adapter()
     daemon=out/'bin/bluetoothd';daemon.write_bytes(patched.data);daemon.chmod(0o755)
     subprocess.run(['codesign','--force','--sign','-','--pagesize','4096',
                     '--preserve-metadata=identifier,entitlements,flags',str(daemon)],check=True)

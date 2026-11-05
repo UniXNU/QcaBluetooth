@@ -41,6 +41,12 @@ MODEL_CAPABILITIES = dict(ext_adv=0xa30, periodic_adv=0xa38, periodic_sync=0xa40
     past_sender=0xa48, past_recipient=0xa50, ext_scan=0xac0, enhanced_connection=0xac8,
     spec_adv=0xad8, coded_phy=0xba8, phy_2m=0xbb8, adv_sets=0x1138)
 H4_PRESTOP = 0x1003083cc
+ROOT_KEY_STORE_CHECK = 0x10085ebcc
+ROOT_KEY_FAILURE = 0x10085ec98
+ROOT_KEY_LOAD_RESULT = 0x10085ed1c
+ROOT_KEY_READS = (0x10085e6bc, 0x10085e778, 0x10085e830, 0x10085e880, 0x10085e90c, 0x10085ec00)
+ROOT_KEY_WRITES = (0x10085e724, 0x10085e7dc, 0x10085e94c, 0x10085ea28, 0x10085ea6c, 0x10085eb14,
+                   0x10085eb9c, 0x10085ec70)
 TRANSPORT = 0x100c1cdf8
 H4_TABLE = 0x100c1cd50
 NATIVE_STATE = 0x100caff80
@@ -293,6 +299,28 @@ class NativeImage(_inspect.Image):
             lambda pc: branch(pc, CHAIN_NEXT)])
         site = OPTIONAL_STEP + 4  # retain the original indirect-call landing pad
         self.put(site, [branch(site, entry)], [0xd100c3ff])
+        return self
+
+    def volatile_root_keys(self):
+        # readRootKeys restarts the daemon when the keychain is unavailable. Generated
+        # keys stay in memory for this daemon's lifetime; pairings do not survive it.
+        for site in ROOT_KEY_READS:
+            word = self.word(site)
+            if word & 0xff00001f != 0x54000001:
+                raise ValueError('root key read branch differs')
+            target = site + ((word >> 5 & 0x7ffff) << 2)
+            self.put(site, [branch(site, target)], [word])
+        for site in ROOT_KEY_WRITES:
+            word = self.word(site)
+            if word & 0xff00001f != 0x34000000:
+                raise ValueError('root key write branch differs')
+            offset = word >> 5 & 0x7ffff
+            offset = offset - (1 << 19) if offset >> 18 else offset
+            self.put(site, [branch(site, site + (offset << 2))], [word])
+        # Remaining key stores and loads cannot fail startup: no restart, and success returned.
+        self.put(ROOT_KEY_STORE_CHECK, [0xd503201f], [0x350016c0])
+        self.put(ROOT_KEY_FAILURE, [mov_w(24, 0)], [mov_w(24, 0x82)])
+        self.put(ROOT_KEY_LOAD_RESULT, [0xaa1f03f8], [0xaa0003f8])
         return self
 
     def h4_shutdown(self):
