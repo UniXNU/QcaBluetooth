@@ -15,6 +15,8 @@
 #define QBT_COMMAND_TIMEOUT 10000000000ULL
 #define QBT_WAKE_RETRY 100000000ULL
 #define QBT_TX_POLL 1000000ULL
+#define QBT_SPEED_REPLY_MS 100u
+#define QBT_SPEED_SETTLE_MS 5u
 #define QBT_TX_IDLE 2000000000ULL
 enum { QBT_ASLEEP, QBT_WAKING, QBT_AWAKE };
 struct qbt_tx_frame { uint8_t type, header[4], have, need; unsigned body; };
@@ -30,7 +32,7 @@ struct qbt {
     uint64_t retry_at, idle_at;
     uint8_t control[16]; unsigned control_length;
     uint8_t command[259]; unsigned command_length, command_offset;
-    bool waiting, complete;
+    bool waiting, complete, speed_reply;
     uint16_t wait_opcode;
     uint8_t wait_event;
     uint8_t reply[258]; unsigned reply_length;

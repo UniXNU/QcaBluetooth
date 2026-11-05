@@ -10,6 +10,7 @@ struct fixture {
     size_t write_limit, receive_room, received_length;
     uint8_t received[70000], tx_frame[70000]; unsigned tx_count, tx_need;
     uint8_t patch[1001], nvm[603], downloaded[2048]; size_t downloaded_length, download_size;
+    bool progress_acks, progress_loss, speed_reply; unsigned progress_sent; uint64_t progress_delay, speed_settle, speed_command_at;
     unsigned download_mode, failed_opcode; bool missing_replies, missing_wake, board_specific;
     bool nvm_edited, address_written, wake_armed, hardware_fault, clock_fault;
 };
@@ -30,7 +31,11 @@ static void complete(struct fixture *f,unsigned op,const uint8_t *p,size_t n){
 static void controller(struct fixture *f,const uint8_t *p,unsigned n){
     unsigned op=le16(p+1);assert(n==p[3]+4u);f->commands++;
     const uint8_t *param=p+4;uint8_t response[64]={0};size_t length=1;
-    if(op==0xfc48)return; /* speed switching has no synchronous completion */
+    if(op==0xfc48){ /* no synchronous completion; a late report may follow the switch */
+        f->speed_command_at=f->now;
+        if(f->speed_reply){const uint8_t e[]={4,0x0e,4,1,0x48,0xfc,1};queue(f,e,sizeof(e),f->speed_settle/2);}
+        return;
+    }
     if(op==0xfc00){
         response[1]=param[0];length=2;
         if(param[0]==0x19){length=15;response[2]=0;put32(response+3,0x21);put16(response+7,0x1234);put16(response+9,0x0200);put32(response+11,0x400c0200);}
@@ -38,6 +43,8 @@ static void controller(struct fixture *f,const uint8_t *p,unsigned n){
         else if(param[0]==0x20){const char *label="WCN7850-fixture";length=strlen(label)+3;response[2]=strlen(label);memcpy(response+3,label,strlen(label));}
         else if(param[0]==0x1e){
             unsigned bytes=param[1];assert(bytes==n-6&&bytes<=243);
+            /* A segment that arrives before the controller finished its speed change is lost. */
+            if(f->speed_settle)assert(f->now>=f->speed_command_at+f->speed_settle);
             if(!f->downloaded_length){assert(bytes>=28);f->download_size=(le32(param+2)>>8)+4;f->download_mode=param[2]==1?param[16]:0;}
             assert(f->downloaded_length+bytes<=sizeof(f->downloaded));memcpy(f->downloaded+f->downloaded_length,param+2,bytes);f->downloaded_length+=bytes;
             if(f->downloaded_length==f->download_size){
@@ -45,7 +52,16 @@ static void controller(struct fixture *f,const uint8_t *p,unsigned n){
                     const uint8_t *tag=f->downloaded+4;assert(le16(tag)==17);assert((tag[12]&0x80)&&tag[13]==17);
                     tag+=15;assert(le16(tag)==27&&(tag[12]&1));f->nvm_edited=true;
                 }f->downloaded_length=0;
-            } else if(f->download_mode==1||f->download_mode==3)return;
+            } else if(f->download_mode==1||f->download_mode==3){
+                if(f->progress_acks){
+                    /* Stale reports arrive behind the bytes the host is sending. */
+                    static const uint8_t status[]={0x10,0x11,0x10,0x01};
+                    uint8_t ack[]={4,0x0e,5,1,0,0xfc,status[f->progress_sent%4],0x1e};
+                    f->progress_sent++;
+                    if(!f->progress_loss)queue(f,ack,sizeof(ack),f->progress_delay?f->progress_delay:50000);
+                }
+                return;
+            }
         }
     } else if(op==0xfc14){const uint8_t expected[]={2,2,3,4,5,7};assert(!memcmp(param,expected,6));f->address_written=true;}
     else if(op==0x1009){length=7;memset(response+1,0x42,6);}
@@ -81,10 +97,19 @@ static size_t receive(void *c,const uint8_t *p,size_t n){
 static void pump(void *c){
     struct fixture *f=c;
     if(f->hardware_fault){qbt_fail(f->q,-EIO);return;}
-    for(unsigned i=0;i<128;i++){
-        struct event *e=&f->events[i];if(!e->size||e->at>f->now)continue;
+    /* The wire is ordered: finish the earliest due event before starting another. */
+    for(;;){
+        struct event *e=NULL;
+        for(unsigned i=0;i<128;i++){
+            struct event *c=&f->events[i];if(!c->size||c->at>f->now)continue;
+            if(c->offset){e=c;break;}
+            if(!e||c->at<e->at)e=c;
+        }
+        if(!e)return;
         size_t n=e->size-e->offset;if(n>3)n=3; /* every reply spans parser calls */
-        e->offset+=qbt_receive(f->q,e->bytes+e->offset,n);if(e->offset==e->size)e->size=0;
+        size_t used=qbt_receive(f->q,e->bytes+e->offset,n);
+        e->offset+=used;if(e->offset==e->size)e->size=0;
+        if(!used)return;
     }
 }
 static void wait_until(void *c,uint64_t deadline){
@@ -122,6 +147,27 @@ static void initialization(void){
         assert(f->firmware_gets==3&&f->nvm_edited&&f->address_written&&f->speed==3200000&&f->flow_off==1&&f->flow_on==1);
         assert(!qbt_shutdown(f->q));destroy(f);free(f);
     }
+}
+/* WCN7850 reports every skipped TLV segment with status 0x10 in Command Complete.
+ * Those reports must not answer the wait on the final segment. */
+static void progress_reports(void){
+    struct fixture *f=calloc(1,sizeof(*f));make(f,3);f->progress_acks=true;f->progress_delay=400000;
+    assert(!boot(f));struct qbt_info info;qbt_get_info(f->q,&info);assert(info.state==2&&f->address_written);
+    struct qbt_stats stats;qbt_get_stats(f->q,&stats);
+    assert(f->progress_sent>0&&stats.tlv_sent==stats.tlv_acks);
+    destroy(f);
+    /* Missing reports for skipped segments do not delay the final status. */
+    make(f,3);f->progress_acks=true;f->progress_loss=true;
+    assert(!boot(f));
+    destroy(f);free(f);
+}
+/* WCN7850 changes speed after the host could already be sending. The first TLV
+ * segment holds the download mode, so it must wait for the controller. */
+static void speed_settle(void){
+    struct fixture *f=calloc(1,sizeof(*f));make(f,3);f->speed_settle=4000000;f->speed_reply=true;
+    assert(!boot(f));assert(f->address_written);destroy(f);
+    make(f,3);f->speed_settle=50000000;
+    assert(!boot(f));assert(f->address_written);destroy(f);free(f);
 }
 static void failures(void){
     struct fixture *f=calloc(1,sizeof(*f));make(f,3);f->failed_opcode=0xfc17;assert(boot(f)==-EIO&&f->q->info.state==3);
@@ -189,4 +235,4 @@ static void tx_ibs_boundaries(void){
     assert(f->q->info.state==3 && f->q->info.error==-ECANCELED);
     destroy(f);free(f);
 }
-int main(void){initialization();failures();receive_pressure();sleep_and_wake();lost_wake();clock_failure();tx_ibs_boundaries();puts("PASS: original Linux WCN7850 setup, firmware/BID fallback, NVM edits, H4 fragmentation/backpressure, status failure, true timeout, partial DMA TX, IBS packet boundaries, clock/wake recovery and terminal clock faults");}
+int main(void){initialization();failures();progress_reports();speed_settle();receive_pressure();sleep_and_wake();lost_wake();clock_failure();tx_ibs_boundaries();puts("PASS: original Linux WCN7850 setup, firmware/BID fallback, NVM edits, H4 fragmentation/backpressure, status failure, true timeout, partial DMA TX, IBS packet boundaries, clock/wake recovery and terminal clock faults");}

@@ -34,6 +34,7 @@ struct qbt_stats {
     uint64_t commands, timeouts, malformed, unmatched_events;
     uint64_t wake_ind, wake_ack, sleep_ind, wake_retries, clock_sleeps;
     uint64_t backpressure, tx_rejected, resets;
+    uint64_t tlv_sent, tlv_acks, tlv_final_status, hardware_errors, last_hardware_error;
 };
 struct qbt_info {
     unsigned state; /* 0 off, 1 initializing, 2 ready, 3 failed */

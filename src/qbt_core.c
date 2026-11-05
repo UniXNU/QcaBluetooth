@@ -51,6 +51,14 @@ static size_t tx_advance(struct qbt_tx_frame *f,const uint8_t *p,size_t n) {
 }
 static void event(struct qbt *q) {
     const uint8_t *e = q->event; unsigned n = q->event_length;
+    if (n >= 3 && e[0] == 0x10) { q->stats.hardware_errors++; q->stats.last_hardware_error = e[2]; }
+    /* The speed change completes after the switch, at the new rate. */
+    if (n >= 5 && e[0] == 0x0e && e[3] == 0x48 && e[4] == 0xfc) q->speed_reply = true;
+    /* A nonzero TLV report describes an earlier segment; only status 0 answers a wait. */
+    if (n >= 7 && e[0] == 0x0e && e[3] == 0x00 && e[4] == 0xfc && e[6] == 0x1e) {
+        q->stats.tlv_acks++; q->stats.tlv_final_status = e[5];
+        if (e[5]) return;
+    }
     if (q->waiting && !q->complete) {
         bool match = false;
         if (!q->wait_event && n >= 5 && e[0] == 0x0e)
@@ -241,6 +249,7 @@ int qbt_send_command(struct qbt *q, uint16_t op, const void *data, unsigned n) {
     q->command[0] = 1; q->command[1] = (uint8_t)op; q->command[2] = op >> 8; q->command[3] = (uint8_t)n;
     if (n) memcpy(q->command + 4, data, n);
     q->command_length = n + 4; q->command_offset = 0; q->stats.commands++;
+    if (op == 0xfc00 && n && ((const uint8_t *)data)[0] == 0x1e) q->stats.tlv_sent++;
     return run(q, deadline, 0);
 }
 int qbt_command(struct qbt *q, uint16_t op, const void *data, unsigned n, uint8_t ev,

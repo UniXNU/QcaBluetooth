@@ -75,10 +75,14 @@ void hci_set_quirk(struct hci_dev *h,unsigned value) {(void)h;(void)value;}
 void hci_set_msft_opcode(struct hci_dev *h,unsigned value) {(void)h;(void)value;}
 static int set_speed(struct qbt *q,uint32_t speed,uint8_t baud) {
     int e=q->ops.uart_flow(q->ops.context,false);if(e)return e;
+    q->speed_reply=false;
     e=qbt_send_command(q,0xfc48,&baud,1);
     if(!e)e=qbt_drain(q,q->ops.now_ns(q->ops.context)+QBT_COMMAND_TIMEOUT);
     if(!e){qbt_delay(q,1);e=q->ops.uart_speed(q->ops.context,speed);}
     int flow=q->ops.uart_flow(q->ops.context,true);if(!e)e=flow;
+    /* The first TLV segment holds the download mode and is lost if it precedes the switch. */
+    for(unsigned ms=0;!e && !q->speed_reply && ms<QBT_SPEED_REPLY_MS;ms++)qbt_delay(q,1);
+    if(!e)qbt_delay(q,QBT_SPEED_SETTLE_MS);
     if(!e)q->info.baud=speed;return e;
 }
 int qbt_boot(struct qbt *q,uint32_t speed,const uint8_t address[6]) {
@@ -89,7 +93,7 @@ int qbt_boot(struct qbt *q,uint32_t speed,const uint8_t address[6]) {
     struct qbt *expected=NULL;
     if(!__atomic_compare_exchange_n(&startup_owner,&expected,q,false,__ATOMIC_ACQ_REL,__ATOMIC_ACQUIRE))return -EBUSY;
     struct qbt_platform platform=q->ops;struct qbt_stats stats=q->stats;
-    memset(q,0,sizeof(*q));q->ops=platform;q->stats=stats;q->clock_on=true;q->info.baud=115200;q->info.state=1;
+    memset(q,0,sizeof(*q));q->ops=platform;q->stats=stats;q->stats.tlv_sent=q->stats.tlv_acks=0;q->clock_on=true;q->info.baud=115200;q->info.state=1;
     struct hci_dev h={.q=q,.dev={.q=q}};struct qca_btsoc_version version;
     int e=qca_read_soc_version(&h,&version,QCA_WCN7850);
     if(!e) {
