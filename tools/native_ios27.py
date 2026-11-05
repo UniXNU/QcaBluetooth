@@ -353,8 +353,8 @@ class NativeImage(_inspect.Image):
         return self
 
     def volatile_root_keys(self):
-        # readRootKeys restarts the daemon when the keychain is unavailable. Generated
-        # keys stay in memory for this daemon's lifetime; pairings do not survive it.
+        # readRootKeys restarts the daemon when the keychain is unavailable. Continue with
+        # generated keys instead; stored keys are used whenever the keychain answers.
         for site in ROOT_KEY_READS:
             word = self.word(site)
             if word & 0xff00001f != 0x54000001:
