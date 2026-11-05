@@ -10,21 +10,34 @@ The adapter targets the original arm64e `bluetoothd` from 24A446:
 `tools/build-userland.py` signs the native daemon with its original identifier
 and entitlements, then stages BlueTool, bluetoothd and the capability library.
 The board runtime builder installs their files, firmware and signed launchd
-cache in the Data addon. The complete kernel, fileset, payload and temporary
-boot image build successfully. Device checks are pending.
-Apple binaries remain external inputs.
+cache in the Data addon. Apple binaries remain external inputs.
 
 ## Routing
 
-The three BCM4357 factory arguments select controller type zero. Registration
-accepts zero and preserves the native 1 through 6000 range. Type zero clears
-the vendor operation table, four vendor hooks and both vendor opcodes. Both
-callback registration paths retain their generic callback. Other controller
-types retain their native paths.
+Every product reaches the original constructor with controller type zero, and
+a product no factory branch lists falls through to the last constructor. The
+daemon's virtual machine check returns false, so chip initialization runs.
+Registration accepts zero and preserves the native 1 through 6000 range. Type
+zero clears the vendor operation table, four vendor hooks and both vendor
+opcodes. Both callback registration paths retain their generic callback.
 
 Optional command 0x0c5b follows byte 18, bit 3 of the native support bitmap;
-unsupported controllers advance through the native initialization chain.
-H4 pre-stop skips its empty extension and retains normal transport close.
+unsupported controllers advance through the native initialization chain. Host
+flow control and erroneous data reporting may be rejected. H4 pre-stop skips its
+empty extension and retains normal transport close.
+
+If the keychain does not answer, root keys stay in memory for the daemon's
+lifetime instead of restarting it.
+
+## Scanning and addresses
+
+Extended scanning uses 0x2041 and 0x2042, because the controller rejects legacy
+scan commands once extended advertising commands have been used. Apple's scan
+extension is off.
+
+A random address (0x2005) is queued before a scan can be enabled. Starting an
+advertising set always sends its address (0x2035). If no resolvable address can
+be generated, the refresh uses a non-resolvable address and completes normally.
 
 ## Capabilities
 
@@ -59,9 +72,11 @@ This follows the address representation in
 Read-only unions expose the signed capability library under /usr/lib and both
 executables under /usr/sbin. The library mounts first. BlueTool retains its
 original Mach service and program path, runs as root and keeps transactions
-active. Its launchd job disables pressured exit. A controller already powered
-off acknowledges the sleep request successfully. Other native jobs are preserved;
-Wi-Fi and Bluetooth share one signed cache and one appended trust module.
+active. Its launchd job disables pressured exit. It starts the controller by
+reading `kern.qbt_power_on`; connecting to UART.SK also starts it. A controller
+already powered off acknowledges the sleep request successfully. Other native
+jobs are preserved; Wi-Fi and Bluetooth share one signed cache and one appended
+trust module.
 
 ## Build and verification
 
@@ -77,7 +92,7 @@ python3 tools/build-userland.py out/runtime --bluetoothd "$BLUETOOTHD"
 python3 tools/patch-ios27.py "$BLUETOOTHD" --output out/ios27/bluetoothd.native
 ```
 
-The 144 instruction cases execute native routing, feature capture, authenticated
+The 165 instruction cases execute native routing, feature capture, authenticated
 call boundaries, getters, lower setters and H4 pre-stop at two ASLR slides.
 PAC operations are modeled without device keys. The production C publisher
 passes 58 HCI and policy cases under ASan/UBSan, including command and feature
