@@ -393,8 +393,8 @@ static int bt_sk_boot_sysctl SYSCTL_HANDLER_ARGS
     lck_mtx_unlock(&bt_sk_lock);
     return error?error:SYSCTL_OUT(req,&value,sizeof(value));
 }
-SYSCTL_PROC(_kern,OID_AUTO,sheng_bt_boot,CTLTYPE_INT|CTLFLAG_RD|CTLFLAG_LOCKED,NULL,0,bt_sk_boot_sysctl,"I","WCN7850 kernel bring-up result");
-SYSCTL_STRING(_kern,OID_AUTO,sheng_bt_firmware,CTLFLAG_RD|CTLFLAG_LOCKED,bt_sk.firmware,sizeof(bt_sk.firmware),"WCN7850 firmware build label");
+SYSCTL_PROC(_kern,OID_AUTO,qbt_boot,CTLTYPE_INT|CTLFLAG_RD|CTLFLAG_LOCKED,NULL,0,bt_sk_boot_sysctl,"I","WCN7850 kernel bring-up result");
+SYSCTL_STRING(_kern,OID_AUTO,qbt_firmware,CTLFLAG_RD|CTLFLAG_LOCKED,bt_sk.firmware,sizeof(bt_sk.firmware),"WCN7850 firmware build label");
 
 /* BlueTool's sandbox denies sysctl writes, so reading this value requests startup
  * and waits for the worker's result. The worker keeps a running controller as it is. */
@@ -417,7 +417,7 @@ static int bt_sk_power_on_sysctl SYSCTL_HANDLER_ARGS
     result=bt_sk.power_result;lck_mtx_unlock(&bt_sk_lock);
     return error?error:SYSCTL_OUT(req,&result,sizeof(result));
 }
-SYSCTL_PROC(_kern,OID_AUTO,sheng_bt_power_on,CTLTYPE_INT|CTLFLAG_RD|CTLFLAG_LOCKED,NULL,0,bt_sk_power_on_sysctl,"I","WCN7850 startup request");
+SYSCTL_PROC(_kern,OID_AUTO,qbt_power_on,CTLTYPE_INT|CTLFLAG_RD|CTLFLAG_LOCKED,NULL,0,bt_sk_power_on_sysctl,"I","WCN7850 startup request");
 
 int qbt_transport_init(const struct qbt_transport_ops *ops)
 {

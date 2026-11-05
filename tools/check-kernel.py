@@ -9,11 +9,13 @@ import sys
 
 p = argparse.ArgumentParser(description=__doc__)
 p.add_argument('tree', type=Path, help='assembled target tree with a built XNU')
+p.add_argument('--record', type=Path, required=True, help='JSON compile command of a board kernel source, relative to the tree')
 p.add_argument('--extra-source', type=Path, action='append', default=[])
+p.add_argument('--board-export', action='append', default=[], help='symbol an extra source may export')
 args = p.parse_args()
 root = Path(__file__).resolve().parents[1]
 tree = args.tree.resolve()
-record = tree/'build/sheng-source-storage/BootDiagExport.command.json'
+record = tree/args.record
 command = json.loads(record.read_text())
 bsd_record = tree/'build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/bsd/DEVELOPMENT/kern_exec.o.json'
 cwd = Path(json.loads('['+bsd_record.read_text().rstrip().rstrip(',')+']')[0]['directory'])
@@ -46,8 +48,8 @@ for source in sources:
 symbols = subprocess.check_output(['nm', '-g', *map(str, objects)], text=True)
 (out/'symbols.txt').write_text(symbols)
 defined = [line.split()[-1] for line in symbols.splitlines() if ' T ' in line or ' S ' in line or ' D ' in line]
-sysctls = {'_sysctl__kern_sheng_bt_'+s for s in ('boot', 'power_on', 'firmware')}
-board_exports = {'_sheng_bt_firmware_read', '_sheng_bt_firmware_release'}
+sysctls = {'_sysctl__kern_qbt_'+s for s in ('boot', 'power_on', 'firmware')}
+board_exports = set(args.board_export)
 unscoped = [s for s in defined if not s.startswith('_qbt_') and s not in sysctls|board_exports]
 if unscoped:
     raise SystemExit('Unscoped kernel exports: '+', '.join(unscoped))

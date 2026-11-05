@@ -15,12 +15,12 @@ static os_log_t logger;
 static int power_on(void) {
     int result=EIO;size_t length=sizeof(result);
     /* A denied request is not a controller failure: UART.SK connect also starts it. */
-    if(sysctlbyname("kern.sheng_bt_power_on",&result,&length,NULL,0))return errno==EPERM?0:errno;
+    if(sysctlbyname("kern.qbt_power_on",&result,&length,NULL,0))return errno==EPERM?0:errno;
     return length==sizeof(result)?result:EIO;
 }
 static int state(void) {
     int result=EIO;size_t length=sizeof(result);
-    if(sysctlbyname("kern.sheng_bt_boot",&result,&length,NULL,0))return errno;
+    if(sysctlbyname("kern.qbt_boot",&result,&length,NULL,0))return errno;
     return length==sizeof(result)?result:EIO;
 }
 static void handle(xpc_object_t message) {
@@ -39,7 +39,7 @@ static void handle(xpc_object_t message) {
     xpc_dictionary_set_int64(reply,"result",error?1:0);
     if(!error) {
         char firmware[64]={0};size_t length=sizeof(firmware)-1;
-        (void)sysctlbyname("kern.sheng_bt_firmware",firmware,&length,NULL,0);
+        (void)sysctlbyname("kern.qbt_firmware",firmware,&length,NULL,0);
         xpc_dictionary_set_int64(reply,"manufacturer",29);
         xpc_dictionary_set_string(reply,"firmware",firmware);
     }
