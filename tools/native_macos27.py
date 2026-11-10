@@ -7,7 +7,8 @@ with a few additions. Every address here was compared with its iPadOS counterpar
 - registration takes a third argument and keeps the type in w8;
 - the advertising address refresh has one more gate, a flag that a block new in this build clears for controller types up to 3;
   that one call is removed, so the flag keeps its default and each advertising set still gets its address;
-- the vendor operation table is 0x60 bytes longer and the model's advertising set count sits in another slot.
+- the vendor operation table is 0x60 bytes longer and the model's advertising set count sits in another slot;
+- the chipset assumed without an external controller is a Broadcom part; it becomes 0, the daemon's value for a third-party one.
 """
 import hashlib
 import struct
@@ -25,6 +26,8 @@ DESCRIPTOR_COUNT = 0x118
 SUPPORT_TABLE = 0x100be19f8
 SUPPORT_BYTES = 64
 LE_FEATURES = 0x100be18c6
+CHIPSET_DEFAULT = 0x1002001f8      # mov w0, #1 before the chipset setter: the default when no external controller was found
+CHIPSET_SETTER = 0x100183784
 CONTROLLER_THUNK = 0x100390790
 CONTROLLER_INIT = 0x10038fcf4
 VIRTUAL_MACHINE_CHECK = 0x100493b64
@@ -165,6 +168,13 @@ class NativeImage(ios.NativeImage):
     def vendor_routing(self):
         if self.descriptor(0x2005) != (SET_RANDOM_ADDRESS, 0x1910) or self.descriptor(0x203b)[0] != NATIVE_BINDINGS['ID_ADV_SETS']:
             raise ValueError('command descriptor numbers differ')
+        # The chipset this daemon assumes when it finds no external controller is 1 (a Broadcom part): its initialization then asks
+        # for the chip's version with a Broadcom vendor command, which this controller refuses, and the daemon restarted every ten
+        # seconds ("HCI initialization failed", sheng run52). Chipset 0 is the daemon's own value for a third-party controller, whose
+        # initialization uses no vendor command; it becomes the default.
+        if self.here(CHIPSET_DEFAULT + 4, 1) != [branch(CHIPSET_DEFAULT + 4, CHIPSET_SETTER, True)]:
+            raise ValueError('chipset default site differs')
+        self.put(CHIPSET_DEFAULT, [mov_w(0, 0)], [mov_w(0, 1)])
         # Every factory branch reaches this thunk: the board has a standard H4 controller whatever product the OS image names.
         entry = self.emit('controller_type', [mov_w(1, 0), lambda pc: branch(pc, CONTROLLER_INIT)])
         self.put(CONTROLLER_THUNK, [branch(CONTROLLER_THUNK, entry)], [branch(CONTROLLER_THUNK, CONTROLLER_INIT)])
