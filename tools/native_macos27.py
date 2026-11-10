@@ -67,8 +67,8 @@ TRANSPORT = 0x100ba6138
 H4_TABLE = 0x100ba5598
 NATIVE_STATE = 0x100be3f80
 NATIVE_STATE_BYTES = 128
-# The daemon's sandbox maps libraries only from system locations; /Library/Apple/usr/lib is the one of them on the Data volume.
-NATIVE_DYLIB = b'/Library/Apple/usr/lib/QcaBTType0.dylib'
+# The daemon's sandbox maps libraries only from system locations. The addon's lib directory is shown over /usr/lib (as on iPadOS).
+NATIVE_DYLIB = b'/usr/lib/QcaBTType0.dylib'
 ADV_START = 0x10074a120
 ADV_MODE = 0x90
 ADV_CAPACITY = 6
