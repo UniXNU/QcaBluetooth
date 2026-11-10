@@ -29,7 +29,7 @@ struct qbt {
     unsigned tx_head, tx_length;
     bool service, ibs, rx_awake, clock_on;
     unsigned tx_state, wake_attempts;
-    uint64_t retry_at, idle_at;
+    uint64_t retry_at, idle_at, write_retry_at;
     uint8_t control[16]; unsigned control_length;
     uint8_t command[259]; unsigned command_length, command_offset;
     bool waiting, complete, speed_reply;

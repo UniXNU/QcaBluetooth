@@ -25,6 +25,15 @@ static bool flush(struct qbt *q) {
     q->forward_offset = q->forward_length = 0;
     return true;
 }
+/* An idle UART that takes nothing is not running (stopped engine, clock off below this layer). No completion will
+ * announce when it runs again, so the write is tried again at the poll interval. */
+static size_t uart_write(struct qbt *q, uint64_t t, const uint8_t *p, size_t n) {
+    bool idle = drained(q);
+    size_t used = q->ops.uart_write(q->ops.context, p, n);
+    if (used) q->write_retry_at = 0;
+    else if (idle) { q->write_retry_at = t + QBT_TX_POLL; q->stats.tx_refused++; }
+    return used;
+}
 static void control(struct qbt *q, uint8_t b) {
     if (q->control_length < sizeof(q->control)) q->control[q->control_length++] = b;
     else q->stats.malformed++;
@@ -153,7 +162,8 @@ void qbt_step(struct qbt *q) {
     if (q->info.state == 3) return;
     (void)flush(q);
     uint64_t t = now(q); bool pending = q->command_length || (q->service && q->tx_length);
-    if (pending) {
+    /* A control byte needs the UART clock as much as a packet does. */
+    if (pending || q->control_length) {
         int e = clock_on(q);
         if (e) { qbt_fail(q, e); return; }
     }
@@ -168,7 +178,7 @@ void qbt_step(struct qbt *q) {
         control(q, WAKE_IND); q->retry_at = t + QBT_WAKE_RETRY; q->stats.wake_retries++;
     }
     if (q->control_length && q->clock_on && !q->tx_frame.type) {
-        size_t n = q->ops.uart_write(q->ops.context, q->control, q->control_length);
+        size_t n = uart_write(q, t, q->control, q->control_length);
         if (n > q->control_length) n = q->control_length;
         memmove(q->control, q->control + n, q->control_length - n); q->control_length -= (unsigned)n;
         if (q->control_length) return;
@@ -182,7 +192,7 @@ void qbt_step(struct qbt *q) {
             struct qbt_tx_frame preview=q->tx_frame;
             n=tx_advance(&preview,p,n);
             if(!n){q->info.error=-EPROTO;q->info.state=3;q->service=false;return;}
-            size_t used = q->ops.uart_write(q->ops.context, p, n); if (used > n) used = n;
+            size_t used = uart_write(q, t, p, n); if (used > n) used = n;
             if(used)(void)tx_advance(&q->tx_frame,p,used);
             q->stats.tx_bytes += used;
             if (cmd) { q->command_offset += (unsigned)used; if (q->command_offset == q->command_length) q->command_offset = q->command_length = 0; }
@@ -196,14 +206,25 @@ void qbt_step(struct qbt *q) {
     }
     if (q->ibs && q->tx_state == QBT_ASLEEP && !q->rx_awake && !q->tx_length &&
         !q->command_length && !q->control_length && !q->tx_frame.type && q->clock_on && drained(q)) {
-        if (!q->ops.clock(q->ops.context, false)) { q->clock_on = false; q->stats.clock_sleeps++; }
+        if (!q->ops.clock(q->ops.context, false)) {
+            q->clock_on = false; q->stats.clock_sleeps++;
+            /* The platform services the UART while it stops it and may hand over bytes through qbt_receive. A wake
+             * indication among them leaves an acknowledgement to send and a peer that is awake: the clock goes back on. */
+            if (q->info.state != 3 && (q->control_length || q->rx_awake)) {
+                q->stats.clock_reverts++;
+                int e = clock_on(q);
+                if (e) qbt_fail(q, e);
+            }
+        }
     }
 }
 uint64_t qbt_deadline(const struct qbt *q) {
     if (q->info.state == 3) return UINT64_MAX;
     bool idle = q->ops.uart_drained(q->ops.context);
-    if (q->control_length && !q->tx_frame.type && idle) return 0;
-    if ((q->command_length || (q->service && q->tx_length)) && idle && q->tx_state != QBT_WAKING) return 0;
+    /* Zero asks for another step at once, so it is given only while the UART takes bytes: after a refused write the
+     * next attempt waits for write_retry_at. */
+    if (q->control_length && !q->tx_frame.type && idle) return q->write_retry_at;
+    if ((q->command_length || (q->service && q->tx_length)) && idle && q->tx_state != QBT_WAKING) return q->write_retry_at;
     if (q->tx_state == QBT_WAKING && q->retry_at) return q->retry_at;
     if (q->ibs && !q->tx_frame.type && q->tx_state == QBT_AWAKE && q->idle_at && idle) return q->idle_at;
     return UINT64_MAX;
@@ -223,7 +244,7 @@ void qbt_rx_wake(struct qbt *q) {
 }
 void qbt_fail(struct qbt *q,int error) {
     q->info.state=3;q->info.error=error<0?error:-EIO;q->service=false;
-    q->retry_at=q->idle_at=0;
+    q->retry_at=q->idle_at=q->write_retry_at=0;
 }
 static int run(struct qbt *q, uint64_t deadline, unsigned predicate) {
     for (;;) {

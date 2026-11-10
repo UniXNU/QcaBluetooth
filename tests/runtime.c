@@ -12,7 +12,7 @@ struct fixture {
     uint8_t patch[1001], nvm[603], downloaded[2048]; size_t downloaded_length, download_size;
     bool progress_acks, progress_loss, speed_reply; unsigned progress_sent; uint64_t progress_delay, speed_settle, speed_command_at;
     unsigned download_mode, failed_opcode; bool missing_replies, missing_wake, board_specific;
-    bool nvm_edited, address_written, wake_armed, hardware_fault, clock_fault;
+    bool nvm_edited, address_written, wake_armed, hardware_fault, clock_fault, wake_in_stop, uart_stopped;
 };
 static void put16(uint8_t *p,unsigned v){p[0]=v;p[1]=v>>8;}
 static void put32(uint8_t *p,unsigned v){put16(p,v);put16(p+2,v>>16);}
@@ -84,12 +84,19 @@ static void release(void *c,void *p,size_t n){(void)n;((struct fixture *)c)->fre
 static uint64_t now(void *c){return ((struct fixture *)c)->now;}
 static bool drained(void *c){struct fixture *f=c;return f->now>=f->tx_done;}
 static size_t write_uart(void *c,const uint8_t *p,size_t n){
-    struct fixture *f=c;if(!drained(c))return 0;if(n>f->write_limit)n=f->write_limit;
+    struct fixture *f=c;if(!drained(c)||f->uart_stopped)return 0;if(n>f->write_limit)n=f->write_limit;
     f->tx_done=f->now+100000;for(size_t i=0;i<n;i++)tx_byte(f,p[i]);return n;
 }
 static int speed(void *c,uint32_t n){struct fixture *f=c;assert(drained(c));f->speed=n;return 0;}
 static int flow(void *c,bool on){struct fixture *f=c;if(on)f->flow_on++;else f->flow_off++;return 0;}
-static int clock_vote(void *c,bool on){struct fixture *f=c;if(on){if(f->clock_fault)return -ENXIO;f->clock_on++;}else{if(!f->wake_armed)return -EBUSY;assert(drained(c));f->clock_off++;}return 0;}
+static int clock_vote(void *c,bool on){
+    struct fixture *f=c;
+    if(on){if(f->clock_fault)return -ENXIO;f->clock_on++;return 0;}
+    if(!f->wake_armed)return -EBUSY;assert(drained(c));
+    /* A board services its UART while it stops it: a wake edge it latched earlier reaches the core here. */
+    if(f->wake_in_stop){f->wake_in_stop=false;uint8_t wake=0xfd;qbt_rx_wake(f->q);assert(qbt_receive(f->q,&wake,1)==1);}
+    f->clock_off++;return 0;
+}
 static size_t receive(void *c,const uint8_t *p,size_t n){
     struct fixture *f=c;if(n>f->receive_room)n=f->receive_room;assert(n<=sizeof(f->received)-f->received_length);
     memcpy(f->received+f->received_length,p,n);f->received_length+=n;f->receive_room-=n;return n;
@@ -235,4 +242,40 @@ static void tx_ibs_boundaries(void){
     assert(f->q->info.state==3 && f->q->info.error==-ECANCELED);
     destroy(f);free(f);
 }
-int main(void){initialization();failures();progress_reports();speed_settle();receive_pressure();sleep_and_wake();lost_wake();clock_failure();tx_ibs_boundaries();puts("PASS: original Linux WCN7850 setup, firmware/BID fallback, NVM edits, H4 fragmentation/backpressure, status failure, true timeout, partial DMA TX, IBS packet boundaries, clock/wake recovery and terminal clock faults");}
+/* A wake indication handed over inside clock(false) leaves an acknowledgement queued behind a stopped clock.
+ * The executor must send it, not ask for another step forever. */
+static void wake_during_clock_stop(void){
+    struct fixture *f=calloc(1,sizeof(*f));make(f,3);assert(!boot(f));qbt_set_service(f->q,true);drive(f,50);assert(!f->q->clock_on);
+    uint8_t wake=0xfd,asleep=0xfe;
+    qbt_rx_wake(f->q);assert(qbt_receive(f->q,&wake,1)==1);drive(f,20);assert(f->q->clock_on&&!f->q->control_length);
+    unsigned acks=f->tx_acks,stops=f->clock_off,starts=f->clock_on;
+    assert(qbt_receive(f->q,&asleep,1)==1);f->wake_in_stop=true;
+    pump(f);qbt_step(f->q);
+    struct qbt_stats stats;qbt_get_stats(f->q,&stats);
+    assert(f->clock_off==stops+1&&f->clock_on==starts+1&&f->q->clock_on&&f->q->rx_awake&&stats.clock_reverts==1);
+    unsigned steps=0;
+    while(qbt_deadline(f->q)!=UINT64_MAX){assert(++steps<8);pump(f);qbt_step(f->q);if(!drained(f))f->now=f->tx_done;}
+    assert(f->tx_acks==acks+1&&!f->q->control_length&&f->q->clock_on);
+    assert(qbt_receive(f->q,&asleep,1)==1);drive(f,50);assert(!f->q->clock_on&&f->clock_off==stops+2);
+    /* The same holds for any control byte found behind a stopped clock. */
+    f->q->control[0]=0xfc;f->q->control_length=1;acks=f->tx_acks;
+    assert(qbt_deadline(f->q)==0);qbt_step(f->q);assert(f->q->clock_on&&f->tx_acks==acks+1&&!f->q->control_length);
+    assert(qbt_deadline(f->q)!=0);
+    destroy(f);free(f);
+}
+/* An idle UART that takes no bytes is retried at the poll interval, not in a loop. */
+static void refused_write(void){
+    struct fixture *f=calloc(1,sizeof(*f));make(f,3);assert(!boot(f));qbt_set_service(f->q,true);drive(f,50);
+    qbt_rx_wake(f->q);uint8_t wake=0xfd;f->uart_stopped=true;unsigned acks=f->tx_acks;
+    assert(qbt_receive(f->q,&wake,1)==1);
+    for(unsigned i=0;i<5;i++){
+        qbt_step(f->q);uint64_t next=qbt_deadline(f->q);
+        assert(drained(f)&&f->q->control_length==1&&next==f->now+QBT_TX_POLL);f->now=next;
+    }
+    struct qbt_stats stats;qbt_get_stats(f->q,&stats);assert(stats.tx_refused==5&&f->tx_acks==acks);
+    f->uart_stopped=false;qbt_step(f->q);assert(f->tx_acks==acks+1&&!f->q->control_length&&!f->q->write_retry_at);
+    uint8_t acl[]={2,1,0,1,0,0};assert(!qbt_transmit(f->q,acl,sizeof(acl)));drive(f,80);assert(!f->q->tx_length&&!f->tx_count);
+    qbt_get_stats(f->q,&stats);assert(stats.tx_refused==5);
+    destroy(f);free(f);
+}
+int main(void){initialization();failures();progress_reports();speed_settle();receive_pressure();sleep_and_wake();lost_wake();clock_failure();tx_ibs_boundaries();wake_during_clock_stop();refused_write();puts("PASS: original Linux WCN7850 setup, firmware/BID fallback, NVM edits, H4 fragmentation/backpressure, status failure, true timeout, partial DMA TX, IBS packet boundaries, clock/wake recovery, terminal clock faults, wake during a clock stop and refused writes");}

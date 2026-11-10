@@ -19,7 +19,8 @@ struct qbt_platform {
     bool (*uart_drained)(void *);
     int (*uart_speed)(void *, uint32_t);
     int (*uart_flow)(void *, bool);
-    /* clock(false) succeeds only with a real RX wake source armed. */
+    /* clock(false) succeeds only with a real RX wake source armed. It may call qbt_receive and qbt_rx_wake while it
+     * stops the UART; qbt_step turns the clock back on when a wake indication arrived that way. */
     int (*clock)(void *, bool);
     void (*pump)(void *);
     void (*wait_until)(void *, uint64_t);
@@ -35,6 +36,9 @@ struct qbt_stats {
     uint64_t wake_ind, wake_ack, sleep_ind, wake_retries, clock_sleeps;
     uint64_t backpressure, tx_rejected, resets;
     uint64_t tlv_sent, tlv_acks, tlv_final_status, hardware_errors, last_hardware_error;
+    /* clock_reverts: stops undone because a wake indication arrived inside clock(false).
+     * tx_refused: writes an idle UART did not take. */
+    uint64_t clock_reverts, tx_refused;
 };
 struct qbt_info {
     unsigned state; /* 0 off, 1 initializing, 2 ready, 3 failed */

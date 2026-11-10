@@ -117,6 +117,6 @@ int qbt_shutdown(struct qbt *q) {
     struct hci_dev h={.q=q,.dev={.q=q}};
     int e=q->info.state==2?qca_send_pre_shutdown_cmd(&h):0;
     __atomic_store_n(&startup_owner,NULL,__ATOMIC_RELEASE);q->ibs=false;q->waiting=false;
-    q->command_length=q->command_offset=q->control_length=0;q->retry_at=q->idle_at=0;
+    q->command_length=q->command_offset=q->control_length=0;q->retry_at=q->idle_at=q->write_retry_at=0;
     q->header_need=q->body=0;q->info.state=0;q->info.error=e;return e;
 }
