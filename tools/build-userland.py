@@ -10,7 +10,7 @@ import re
 import shutil
 import subprocess
 import sys
-from native_ios27 import NativeImage, ORIGINAL_SHA256, ORIGINAL_UUID, NATIVE_DYLIB
+import importlib
 
 root = Path(__file__).resolve().parents[1]
 
@@ -32,15 +32,24 @@ def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('output',type=Path)
     parser.add_argument('--bluetoothd',type=Path,required=True)
+    parser.add_argument('--os',choices=['ios27','macos27'],default='ios27')
     args=parser.parse_args()
+    macos=args.os=='macos27'
+    native=importlib.import_module('native_macos27' if macos else 'native_ios27')
+    NativeImage,ORIGINAL_SHA256,ORIGINAL_UUID,NATIVE_DYLIB=native.NativeImage,native.ORIGINAL_SHA256,native.ORIGINAL_UUID,native.NATIVE_DYLIB
+    out=args.output.resolve();out.mkdir(parents=True,exist_ok=True)
+    if macos:
+        # macOS ships a universal daemon; the adapter is for its arm64e slice, which keeps its own signature.
+        thin=out/'bluetoothd.arm64e'
+        subprocess.run(['lipo',str(args.bluetoothd),'-thin','arm64e','-output',str(thin)],check=True)
+        args.bluetoothd=thin
     image=NativeImage(args.bluetoothd)
     original_entitlements=entitlements(args.bluetoothd)
     original_signature=signature(args.bluetoothd)
-    out=args.output.resolve();out.mkdir(parents=True,exist_ok=True)
     (out/'report.json').unlink(missing_ok=True)
     build=out/'build';build.mkdir(exist_ok=True)
-    subprocess.run([sys.executable,root/'tools/build-bluetool.py','--output',build],check=True)
-    subprocess.run([sys.executable,root/'tools/build-type0.py','--output',build],check=True)
+    subprocess.run([sys.executable,root/'tools/build-bluetool.py','--output',build,'--os',args.os],check=True)
+    subprocess.run([sys.executable,root/'tools/build-type0.py','--output',build,'--os',args.os],check=True)
     for name in ('bin','lib','config'):(out/name).mkdir(exist_ok=True)
     for source,dest in ((build/'BlueTool',out/'bin/BlueTool'),
                         (build/'QcaBTType0.dylib',out/'lib/QcaBTType0.dylib')):
@@ -66,10 +75,10 @@ def main():
     for relative in ('bin/BlueTool','bin/bluetoothd','lib/QcaBTType0.dylib'):
         path=out/relative
         files[relative]=dict(signed if relative=='bin/bluetoothd' else signature(path),sha256=hashlib.sha256(path.read_bytes()).hexdigest(),bytes=path.stat().st_size)
-    report=dict(built=True,target='arm64e-apple-ios27.0',hardware_verified=False,
+    report=dict(built=True,target='arm64e-apple-macos27.0' if macos else 'arm64e-apple-ios27.0',hardware_verified=False,
                 native_input_sha256=ORIGINAL_SHA256,native_uuid=ORIGINAL_UUID,
                 native_entitlements_preserved=True,native_entitlement_count=len(original_entitlements),
-                files=files,launchd_job_overrides={'com.apple.BlueTool':{
+                files=files,launchd_job_overrides={} if macos else {'com.apple.BlueTool':{
                     key:job[key] for key in ('UserName','EnableTransactions','EnablePressuredExit','ThrottleInterval')}},
                 patch=patched.report())
     (out/'report.json').write_text(json.dumps(report,indent=2)+'\n')

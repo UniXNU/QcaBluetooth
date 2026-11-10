@@ -12,13 +12,15 @@ root = Path(__file__).resolve().parents[1]
 p = argparse.ArgumentParser(description=__doc__)
 p.add_argument('--output', type=Path, default=root/'out/userland')
 p.add_argument('--sdk', type=Path)
+p.add_argument('--os', choices=['ios27', 'macos27'], default='ios27')
 a = p.parse_args()
+SDK, TARGET = ('macosx', 'arm64e-apple-macos27.0') if a.os == 'macos27' else ('iphoneos', 'arm64e-apple-ios27.0')
 out = a.output.resolve()
 out.mkdir(parents=True, exist_ok=True)
-sdk = str(a.sdk or subprocess.check_output(['xcrun', '--sdk', 'iphoneos', '--show-sdk-path'], text=True).strip())
+sdk = str(a.sdk or subprocess.check_output(['xcrun', '--sdk', SDK, '--show-sdk-path'], text=True).strip())
 source = root/'userland/BlueTool.c'
 binary = out/'BlueTool'
-cc = ['xcrun', '--sdk', 'iphoneos', 'clang', '-target', 'arm64e-apple-ios27.0', '-isysroot', sdk,
+cc = ['xcrun', '--sdk', SDK, 'clang', '-target', TARGET, '-isysroot', sdk,
       '-O2', '-Wall', '-Wextra', '-Werror', '-fblocks', '-fstack-protector-strong', str(source), '-o', str(binary)]
 subprocess.run(cc, check=True)
 entitlements = out/'BlueTool.entitlements.plist'
@@ -34,7 +36,7 @@ job = {'Label': 'com.apple.BlueTool', 'ProgramArguments': ['/usr/sbin/BlueTool',
        'MachServices': {'com.apple.BlueTool': True}, 'UserName': 'root',
        'POSIXSpawnType': 'Interactive', 'EnableTransactions': True, 'EnablePressuredExit': False, 'ThrottleInterval': 3}
 (out/'com.apple.BlueTool.plist').write_bytes(plistlib.dumps(job))
-(out/'report.json').write_text(json.dumps(dict(built=True, target='arm64e-apple-ios27.0',
+(out/'report.json').write_text(json.dumps(dict(built=True, target=TARGET,
     hardware_verified=False, cdhash=cdhash[1], inputs={'BlueTool.c': hashlib.sha256(source.read_bytes()).hexdigest()},
     files={f:hashlib.sha256((out/f).read_bytes()).hexdigest() for f in ('BlueTool','com.apple.BlueTool.plist')},
     command=cc), indent=2)+'\n')
