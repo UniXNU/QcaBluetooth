@@ -7,7 +7,12 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <string.h>
+/* The layout of the daemon this library is built for: iPadOS 27 by default, another target's header through QBT_LAYOUT_HEADER. */
+#ifdef QBT_LAYOUT_HEADER
+#include QBT_LAYOUT_HEADER
+#else
 #include "qbt_ios27_layout.h"
+#endif
 
 #ifdef QBT_TYPE0_TEST
 extern void *qbt_test_memory(uintptr_t);
@@ -185,7 +190,11 @@ static void prepare(void *broadcaster)
 #ifndef QBT_TYPE0_TEST
 __attribute__((constructor)) static void initialize(void)
 {
+#ifdef QBT_NATIVE_UUID
+    static const uint8_t expected[16] = QBT_NATIVE_UUID;
+#else
     static const uint8_t expected[16] = {0x8e,0x49,0x19,0x7b,0xe6,0xbc,0x3f,0x3b,0xa8,0xd3,0xdf,0x4b,0xed,0xd3,0x7f,0x01};
+#endif
     logger = os_log_create("org.unixnu.bluetooth", "Type0");
     const struct mach_header_64 *header = (const void *)_dyld_get_image_header(0);
     const uint8_t *cursor = (const void *)(header + 1);
