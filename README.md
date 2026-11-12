@@ -62,3 +62,12 @@ BlueTool use BSD-2-Clause-Patent. Each file identifies its license;
 
 Vendor firmware and Apple binaries are external inputs and stay out of this
 repository.
+
+For the locked macOS 27.3 arm64e `bluetoothd`, run the capability publisher
+checks with the matching ABI and command descriptors:
+
+```sh
+python3 tools/test-type0.py --os macos27 /path/to/bluetoothd.arm64e
+```
+
+These controller-model tests do not verify radio discovery or pairing.
