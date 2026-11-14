@@ -197,6 +197,36 @@ static void receive_pressure(void){
     assert(qbt_receive(f->q,packet,sizeof(packet))==sizeof(packet));assert(f->received_length==sizeof(packet));
     destroy(f);free(f);
 }
+static void discovery(void) {
+    struct fixture *f = calloc(1, sizeof(*f));
+    make(f, 3);
+    assert(!boot(f));
+    qbt_set_service(f->q, true);
+
+    const uint8_t scan[] = {1, 0x42, 0x20, 6, 1, 0, 0, 0, 0, 0};
+    for (unsigned i = 0; i < sizeof(scan); i++) {
+        assert(!qbt_transmit(f->q, scan + i, 1));
+        drive(f, 1);
+    }
+    drive(f, 10);
+    const uint8_t events[] = {
+        4, 0x0e, 4, 1, 0x42, 0x20, 0x0c,
+        4, 0x0f, 4, 0, 1, 0x01, 0x04,
+        4, 0x3e, 2, 0x0d, 2,
+        4, 0x02, 1, 1,
+    };
+    for (unsigned i = 0; i < sizeof(events); i++)
+        assert(qbt_receive(f->q, events + i, 1) == 1);
+    struct qbt_stats stats;
+    qbt_get_stats(f->q, &stats);
+    assert(stats.discovery.sent[QBT_LE_EXT_SCAN_ENABLE] == 1);
+    assert(stats.discovery.replied[QBT_LE_EXT_SCAN_ENABLE] >= 1);
+    assert(stats.discovery.status[QBT_LE_EXT_SCAN_ENABLE] == 0x0c);
+    assert(stats.discovery.replied[QBT_INQUIRY] == 1);
+    assert(stats.discovery.inquiry_results == 1 && stats.discovery.le_extended_reports == 2);
+    destroy(f);
+    free(f);
+}
 static void sleep_and_wake(void){
     struct fixture *f=calloc(1,sizeof(*f));make(f,3);assert(!boot(f));qbt_set_service(f->q,true);drive(f,50);assert(!f->q->clock_on&&f->clock_off);
     uint8_t acl[205]={2,1,0,200,0};assert(!qbt_transmit(f->q,acl,sizeof(acl)));drive(f,80);assert(!f->q->tx_length&&!f->tx_count&&f->clock_on);
@@ -278,4 +308,4 @@ static void refused_write(void){
     qbt_get_stats(f->q,&stats);assert(stats.tx_refused==5);
     destroy(f);free(f);
 }
-int main(void){initialization();failures();progress_reports();speed_settle();receive_pressure();sleep_and_wake();lost_wake();clock_failure();tx_ibs_boundaries();wake_during_clock_stop();refused_write();puts("PASS: original Linux WCN7850 setup, firmware/BID fallback, NVM edits, H4 fragmentation/backpressure, status failure, true timeout, partial DMA TX, IBS packet boundaries, clock/wake recovery, terminal clock faults, wake during a clock stop and refused writes");}
+int main(void){initialization();failures();progress_reports();speed_settle();receive_pressure();discovery();sleep_and_wake();lost_wake();clock_failure();tx_ibs_boundaries();wake_during_clock_stop();refused_write();puts("PASS: original Linux WCN7850 setup, firmware/BID fallback, NVM edits, H4 fragmentation/backpressure, status failure, true timeout, partial DMA TX, IBS packet boundaries, clock/wake recovery, terminal clock faults, wake during a clock stop and refused writes");}
