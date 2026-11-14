@@ -38,9 +38,39 @@ static void control(struct qbt *q, uint8_t b) {
     if (q->control_length < sizeof(q->control)) q->control[q->control_length++] = b;
     else q->stats.malformed++;
 }
+static int discovery_command(unsigned opcode)
+{
+    switch (opcode) {
+    case 0x0401: return QBT_INQUIRY;
+    case 0x200b: return QBT_LE_SCAN_PARAMS;
+    case 0x200c: return QBT_LE_SCAN_ENABLE;
+    case 0x2041: return QBT_LE_EXT_SCAN_PARAMS;
+    case 0x2042: return QBT_LE_EXT_SCAN_ENABLE;
+    default: return -1;
+    }
+}
+
+static void discovery_event(struct qbt_discovery_stats *stats, const uint8_t *e, unsigned length)
+{
+    if (length >= 6 && (e[0] == 0x0e || e[0] == 0x0f)) {
+        const uint8_t *opcode = e + (e[0] == 0x0e ? 3 : 4);
+        int command = discovery_command(opcode[0] | (uint16_t)opcode[1] << 8);
+        if (command >= 0) {
+            stats->replied[command]++;
+            stats->status[command] = e[e[0] == 0x0e ? 5 : 2];
+        }
+    } else if (length >= 3 && (e[0] == 0x02 || e[0] == 0x22 || e[0] == 0x2f)) {
+        stats->inquiry_results += e[2];
+    } else if (length >= 4 && e[0] == 0x3e) {
+        if (e[2] == 0x02) stats->le_reports += e[3];
+        if (e[2] == 0x0d) stats->le_extended_reports += e[3];
+    }
+}
+
 /* Stop each DMA chunk at a packet boundary. IBS bytes may never be inserted
  * into the middle of a command, ACL, SCO or ISO frame spanning several slots. */
-static size_t tx_advance(struct qbt_tx_frame *f,const uint8_t *p,size_t n) {
+static size_t tx_advance(struct qbt_tx_frame *f, const uint8_t *p, size_t n,
+                         struct qbt_discovery_stats *stats) {
     size_t i=0;
     while(i<n) {
         if(!f->type) {
@@ -50,6 +80,10 @@ static size_t tx_advance(struct qbt_tx_frame *f,const uint8_t *p,size_t n) {
             f->header[f->have++]=p[i++];if(--f->need)continue;
             f->body=f->type==1||f->type==3?f->header[2]:
                 (f->header[2]|(unsigned)f->header[3]<<8)&(f->type==5?0x3fff:0xffff);
+            if (stats && f->type == 1) {
+                int command = discovery_command(f->header[0] | (uint16_t)f->header[1] << 8);
+                if (command >= 0) stats->sent[command]++;
+            }
             if(!f->body){f->type=0;return i;}
         } else {
             size_t take=n-i;if(take>f->body)take=f->body;
@@ -84,6 +118,7 @@ static void event(struct qbt *q) {
         }
     }
     if (q->service && !q->drop) {
+        discovery_event(&q->stats.discovery, e, n);
         q->forward[0] = 4; memcpy(q->forward + 1, e, n);
         q->forward_length = n + 1;
     } else q->stats.unmatched_events++;
@@ -190,10 +225,10 @@ void qbt_step(struct qbt *q) {
         if (n) {
             if (n > QBT_CHUNK) n = QBT_CHUNK;
             struct qbt_tx_frame preview=q->tx_frame;
-            n=tx_advance(&preview,p,n);
+            n=tx_advance(&preview,p,n,NULL);
             if(!n){q->info.error=-EPROTO;q->info.state=3;q->service=false;return;}
             size_t used = uart_write(q, t, p, n); if (used > n) used = n;
-            if(used)(void)tx_advance(&q->tx_frame,p,used);
+            if(used)(void)tx_advance(&q->tx_frame,p,used,cmd?NULL:&q->stats.discovery);
             q->stats.tx_bytes += used;
             if (cmd) { q->command_offset += (unsigned)used; if (q->command_offset == q->command_length) q->command_offset = q->command_length = 0; }
             else { q->tx_head = (q->tx_head + (unsigned)used) % QBT_TX_CAPACITY; q->tx_length -= (unsigned)used; }

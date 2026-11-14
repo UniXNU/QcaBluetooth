@@ -28,6 +28,8 @@ SUPPORT_BYTES = 64
 LE_FEATURES = 0x100be18c6
 CHIPSET_DEFAULT = 0x1002001f8      # mov w0, #1 before the chipset setter: the default when no external controller was found
 CHIPSET_SETTER = 0x100183784
+THIRD_PARTY_LE_EVENT_MASK = 0x10095d54b
+LE_EXTENDED_ADVERTISING_REPORT_BIT = 1 << (0x0d - 1)
 CONTROLLER_THUNK = 0x100390790
 CONTROLLER_INIT = 0x10038fcf4
 VIRTUAL_MACHINE_CHECK = 0x100493b64
@@ -175,6 +177,9 @@ class NativeImage(ios.NativeImage):
         if self.here(CHIPSET_DEFAULT + 4, 1) != [branch(CHIPSET_DEFAULT + 4, CHIPSET_SETTER, True)]:
             raise ValueError('chipset default site differs')
         self.put(CHIPSET_DEFAULT, [mov_w(0, 0)], [mov_w(0, 1)])
+        # Type zero's default LE event mask predates standard extended scanning.
+        # Enable its report event when the Type0 adapter selects extended scan commands.
+        self.put(THIRD_PARTY_LE_EVENT_MASK, [0x1f | LE_EXTENDED_ADVERTISING_REPORT_BIT, 0], [0x1f, 0])
         # Every factory branch reaches this thunk: the board has a standard H4 controller whatever product the OS image names.
         entry = self.emit('controller_type', [mov_w(1, 0), lambda pc: branch(pc, CONTROLLER_INIT)])
         self.put(CONTROLLER_THUNK, [branch(CONTROLLER_THUNK, entry)], [branch(CONTROLLER_THUNK, CONTROLLER_INIT)])

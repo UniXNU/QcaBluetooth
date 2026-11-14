@@ -30,6 +30,20 @@ struct qbt_platform {
     void (*firmware_put)(void *, const uint8_t *, size_t);
     void (*log)(void *, int, const char *);
 };
+enum qbt_discovery_command {
+    QBT_INQUIRY,
+    QBT_LE_SCAN_PARAMS,
+    QBT_LE_SCAN_ENABLE,
+    QBT_LE_EXT_SCAN_PARAMS,
+    QBT_LE_EXT_SCAN_ENABLE,
+    QBT_DISCOVERY_COMMANDS,
+};
+struct qbt_discovery_stats {
+    uint32_t sent[QBT_DISCOVERY_COMMANDS];
+    uint32_t replied[QBT_DISCOVERY_COMMANDS];
+    uint8_t status[QBT_DISCOVERY_COMMANDS];
+    uint32_t inquiry_results, le_reports, le_extended_reports;
+};
 struct qbt_stats {
     uint64_t tx_bytes, rx_bytes, host_bytes, delivered_bytes;
     uint64_t commands, timeouts, malformed, unmatched_events;
@@ -39,6 +53,7 @@ struct qbt_stats {
     /* clock_reverts: stops undone because a wake indication arrived inside clock(false).
      * tx_refused: writes an idle UART did not take. */
     uint64_t clock_reverts, tx_refused;
+    struct qbt_discovery_stats discovery;
 };
 struct qbt_info {
     unsigned state; /* 0 off, 1 initializing, 2 ready, 3 failed */
