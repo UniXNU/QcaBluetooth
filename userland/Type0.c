@@ -162,7 +162,11 @@ static void publish(void)
     s->past_sender = (features >> 24 & 1) && support_all(past_sender, 2);
     s->past_recipient = (features >> 25 & 1) && support_all(past_recipient, 3);
     s->coded_phy = s->ext_scan && (features >> 11 & 1);
+#ifdef QBT_NATIVE_LE_BASELINE_PHY
+    s->phy_2m = 0;
+#else
     s->phy_2m = (features >> 8 & 1) && supports(0x2030) && supports(0x2032);
+#endif
     if (!s->ext_adv) {
         publish_flags();
         advance(0);

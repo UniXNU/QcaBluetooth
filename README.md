@@ -13,6 +13,11 @@ Device: Xiaomi Pad 6S Pro (sheng), iPadOS 27.0.1 (24A446).
 | Not tested | Calls and microphone (HFP/SCO), sleep and wake |
 | Unavailable | Features that need Apple vendor commands |
 
+On sheng with macOS 27.3 (26C5035r), the Type 0 adapter leaves the optional
+LE 2M capability unset in the macOS capability cache and enables HCI LE PHY
+Update Complete reporting. The controller can still report a negotiated
+2M PHY. A BLE keyboard and Bluetooth headphones worked with this setup.
+
 ## Layout
 
 | Path | Contents |
