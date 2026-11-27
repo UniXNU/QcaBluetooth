@@ -29,7 +29,11 @@ LE_FEATURES = 0x100be18c6
 CHIPSET_DEFAULT = 0x1002001f8      # mov w0, #1 before the chipset setter: the default when no external controller was found
 CHIPSET_SETTER = 0x100183784
 THIRD_PARTY_LE_EVENT_MASK = 0x10095d54b
-LE_EXTENDED_ADVERTISING_REPORT_BIT = 1 << (0x0d - 1)
+# Standard BLE 4.1-5.1 LE meta-event bits matching Apple's native mask (0x10095d553) and Type0 capabilities:
+# 0x00001f (4.0 base) | bit 5 (Remote Conn Param Req) | bit 6 (Data Length Change) | bit 9 (Enhanced Conn Complete)
+# | bit 11 (PHY Update Complete) | bit 12 (Extended Adv Report) | bits 13-15 (Periodic Adv Sync/Report/Lost)
+# | bits 17-18 (Adv Set Terminated / Scan Req Received) | bit 23 (PAST Received).
+THIRD_PARTY_LE_EVENT_MASK_VALUE = 0x0086fa7f
 CONTROLLER_THUNK = 0x100390790
 CONTROLLER_INIT = 0x10038fcf4
 VIRTUAL_MACHINE_CHECK = 0x100493b64
@@ -177,9 +181,10 @@ class NativeImage(ios.NativeImage):
         if self.here(CHIPSET_DEFAULT + 4, 1) != [branch(CHIPSET_DEFAULT + 4, CHIPSET_SETTER, True)]:
             raise ValueError('chipset default site differs')
         self.put(CHIPSET_DEFAULT, [mov_w(0, 0)], [mov_w(0, 1)])
-        # Type zero's default LE event mask predates standard extended scanning.
-        # Enable its report event when the Type0 adapter selects extended scan commands.
-        self.put(THIRD_PARTY_LE_EVENT_MASK, [0x1f | LE_EXTENDED_ADVERTISING_REPORT_BIT, 0], [0x1f, 0])
+        # Type zero's default LE event mask (0x1f) only enables BLE 4.0 events, masking out
+        # Data Length Change, Enhanced Connection, PHY Update Complete, Extended/Periodic Advertising,
+        # and PAST events that Type0 advertises and macOS waits on before marking a BLE 5.x link ready.
+        self.put(THIRD_PARTY_LE_EVENT_MASK, [THIRD_PARTY_LE_EVENT_MASK_VALUE, 0], [0x1f, 0])
         # Every factory branch reaches this thunk: the board has a standard H4 controller whatever product the OS image names.
         entry = self.emit('controller_type', [mov_w(1, 0), lambda pc: branch(pc, CONTROLLER_INIT)])
         self.put(CONTROLLER_THUNK, [branch(CONTROLLER_THUNK, entry)], [branch(CONTROLLER_THUNK, CONTROLLER_INIT)])
